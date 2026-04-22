@@ -1,0 +1,33 @@
+.gemini/
+
+# Meson build directory
+build/
+
+# Subprojects
+# Often we want to keep .wrap files but ignore the downloaded source
+subprojects/*
+!subprojects/*.wrap
+!subprojects/flux
+
+# Compiled objects and executables
+*.o
+*.so
+*.a
+muzza
+
+# Generated Wayland protocols (if they ever leak into src)
+src/xdg-shell-client-protocol.h
+src/xdg-shell-protocol.c
+
+# Local test assets
+*.mkv
+*.mp4
+*.mov
+
+# Editor & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
