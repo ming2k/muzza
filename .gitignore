@@ -1,4 +1,5 @@
 .gemini/
+.codex/
 
 # Meson build directory
 build/
@@ -23,6 +24,7 @@ src/xdg-shell-protocol.c
 *.mkv
 *.mp4
 *.mov
+autosave.muzza
 
 # Editor & OS files
 .vscode/
