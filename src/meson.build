@@ -56,4 +56,10 @@ project_test = executable('muzza-project-test',
   dependencies : core_deps,
 )
 
+core_test = executable('muzza-core-test',
+  ['test_muzza_core.c', 'project.c', 'decoder.c', 'path_utils.c'],
+  dependencies : core_deps,
+)
+
 test('project-roundtrip', project_test)
+test('core-regression', core_test)

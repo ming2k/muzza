@@ -165,13 +165,35 @@ static bool insert_media_into_timeline(muzza_app* app, int media_id, double star
     } else {
         track = choose_track_for_insert(app->project, start_time, duration);
     }
-    clip_index = project_add_clip(app->project, media_id, track, start_time, duration, 0.0);
+
+    project_clear_selection(app->project);
+
+    if (media->has_video && media->has_audio) {
+        // Add video clip
+        clip_index = project_add_clip(app->project, media_id, track, MUZZA_CLIP_VIDEO, start_time, duration, 0.0);
+        if (clip_index >= 0) {
+            app->project->clips[clip_index].selected = true;
+        }
+
+        // Add audio clip on the next track if possible
+        int audio_track = (track + 1) < MUZZA_MAX_TRACKS ? (track + 1) : track;
+        int audio_clip_index = project_add_clip(app->project, media_id, audio_track, MUZZA_CLIP_AUDIO, start_time, duration, 0.0);
+        if (audio_clip_index >= 0) {
+            app->project->clips[audio_clip_index].selected = true;
+            if (clip_index < 0) clip_index = audio_clip_index;
+        }
+    } else if (media->has_video) {
+        clip_index = project_add_clip(app->project, media_id, track, MUZZA_CLIP_VIDEO, start_time, duration, 0.0);
+    } else {
+        clip_index = project_add_clip(app->project, media_id, track, MUZZA_CLIP_AUDIO, start_time, duration, 0.0);
+    }
+
     if (clip_index < 0) {
         return false;
     }
 
     SDL_Log(
-        "Inserted clip: media=%d start=%.3f dur=%.3f track=%d project_dur=%.3f",
+        "Inserted media: media=%d start=%.3f dur=%.3f track=%d project_dur=%.3f",
         media_id,
         start_time,
         duration,
@@ -179,9 +201,10 @@ static bool insert_media_into_timeline(muzza_app* app, int media_id, double star
         app->project->duration
     );
 
-    project_clear_selection(app->project);
-    app->project->clips[clip_index].selected = true;
-    app->ui.timeline.selected_clip_index = clip_index;
+    if (clip_index >= 0) {
+        app->project->clips[clip_index].selected = true;
+        app->ui.timeline.selected_clip_index = clip_index;
+    }
     app->ui.media_panel.selected_media_index = media_id;
     playback_reset_session(&app->ui);
     return true;

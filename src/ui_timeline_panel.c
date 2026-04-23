@@ -119,12 +119,34 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         state->media_panel.selected_media_index = proj->clips[clicked_clip].media_id;
         state->media_panel.is_dragging_media = false;
         state->media_panel.dragged_media_index = -1;
+
+        // Start clip dragging
+        timeline->is_dragging_clip = true;
+        timeline->dragged_clip_index = clicked_clip;
+        float clip_x = tracks_x + (float)(proj->clips[clicked_clip].tl_start / proj->duration) * tracks_w;
+        timeline->drag_start_offset = (state->input.x - clip_x) / (tracks_w / proj->duration);
     } else if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, tracks_x, y + 28.0f * s, tracks_w, h - 28.0f * s)) {
         float normalized = (state->input.x - tracks_x) / tracks_w;
         timeline->is_scrubbing = true;
         timeline->playhead_pos = ui_clampf(normalized, 0.0f, 1.0f);
         project_clear_selection(proj);
         timeline->selected_clip_index = -1;
+    }
+
+    if (state->input.left_down && timeline->is_dragging_clip && timeline->dragged_clip_index >= 0) {
+        muzza_clip* clip = &proj->clips[timeline->dragged_clip_index];
+        double new_tl_start = (state->input.x - tracks_x) / (tracks_w / proj->duration) - timeline->drag_start_offset;
+        clip->tl_start = new_tl_start < 0.0 ? 0.0 : new_tl_start;
+
+        // Track dragging
+        double drop_time = 0.0;
+        int drop_track = -1;
+        if (timeline_drop_target(state, x, y, w, h, &drop_time, &drop_track, NULL, NULL, NULL)) {
+            if (drop_track >= 0 && drop_track < MUZZA_MAX_TRACKS) {
+                clip->track_index = drop_track;
+            }
+        }
+        project_recalculate_duration(proj);
     }
 
     if (state->input.left_down && timeline->is_scrubbing) {
@@ -134,6 +156,8 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
 
     if (state->input.left_released) {
         timeline->is_scrubbing = false;
+        timeline->is_dragging_clip = false;
+        timeline->dragged_clip_index = -1;
     }
 
     if (actions && state->media_panel.is_dragging_media && state->input.left_released) {
@@ -199,17 +223,54 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
                 color = MUZZA_COLOR_CLIP_SEL;
             } else if ((int)clip_index == state->timeline.active_clip_index) {
                 color = MUZZA_COLOR_ACCENT_DIM;
+            } else if (clip->type == MUZZA_CLIP_AUDIO) {
+                color = 0xFF4A6B5D; // A different color for audio
             }
 
             ui_draw_rect(canvas, clip_x, current_y + 2.0f * s, clip_w, track_h - 4.0f * s, color);
+            
+            // Draw waveform for audio clips
+            if (clip->type == MUZZA_CLIP_AUDIO && clip->media_id >= 0 && (size_t)clip->media_id < proj->num_media) {
+                const muzza_media* media = &proj->media_pool[clip->media_id];
+                if (media->waveform.peaks && media->waveform.num_peaks > 0) {
+                    float wf_y_center = current_y + track_h * 0.5f;
+                    float wf_h_max = track_h - 12.0f * s;
+                    int num_bars = (int)clip_w;
+                    
+                    if (num_bars > 0) {
+                        for (int i = 0; i < num_bars; i += (int)(1.0f * s)) {
+                            float t_normalized = (float)i / clip_w;
+                            double media_time = clip->media_in + t_normalized * clip->tl_duration;
+                            float peak_normalized = (float)(media_time / media->duration);
+                            
+                            if (peak_normalized >= 0.0f && peak_normalized <= 1.0f) {
+                                int peak_idx = (int)(peak_normalized * (media->waveform.num_peaks - 1));
+                                float peak = media->waveform.peaks[peak_idx];
+                                float line_h = peak * wf_h_max;
+                                float line_x = clip_x + (float)i;
+                                
+                                if (line_x >= clip_x && line_x < clip_x + clip_w) {
+                                    ui_draw_rect(canvas, line_x, wf_y_center - line_h * 0.5f, 1.0f * s, line_h, 0xAAFFFFFF);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             ui_draw_border(canvas, clip_x, current_y + 2.0f * s, clip_w, track_h - 4.0f * s, s, MUZZA_COLOR_BORDER);
             if (clip->media_id >= 0 && (size_t)clip->media_id < proj->num_media) {
+                char label[1024];
+                snprintf(label, sizeof(label), "%s [%s]", 
+                    muzza_path_basename(proj->media_pool[clip->media_id].filepath),
+                    clip->type == MUZZA_CLIP_VIDEO ? "V" : "A");
+
                 ui_draw_text_ellipsis(
                     canvas,
                     clip_x + 6.0f * s,
                     current_y + 8.0f * s,
                     clip_w - 12.0f * s,
-                    muzza_path_basename(proj->media_pool[clip->media_id].filepath),
+                    label,
                     1.0f * s,
                     0xFFF3F8FB
                 );

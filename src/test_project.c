@@ -34,9 +34,9 @@ int main(void) {
     assert(project_add_media(proj, "broll.mp4") == 1);
     assert(proj->num_media == 2);
 
-    clip_index = project_add_clip(proj, media_id, 2, 12.5, 4.0, 1.25);
+    clip_index = project_add_clip(proj, media_id, 2, MUZZA_CLIP_VIDEO, 12.5, 4.0, 1.25);
     assert(clip_index == 0);
-    assert(project_add_clip(proj, 1, 1, 3.0, 2.0, 0.0) == 1);
+    assert(project_add_clip(proj, 1, 1, MUZZA_CLIP_VIDEO, 3.0, 2.0, 0.0) == 1);
     proj->clips[clip_index].opacity = 0.75f;
     proj->clips[clip_index].scale = 1.2f;
     proj->clips[clip_index].selected = true;

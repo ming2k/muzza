@@ -34,6 +34,9 @@ typedef struct {
     bool is_scrubbing;
     bool is_dragging_track_edge;
     int dragged_track_index;
+    bool is_dragging_clip;
+    int dragged_clip_index;
+    double drag_start_offset;
     int selected_clip_index;
     int active_clip_index;
     float playhead_pos;
@@ -49,7 +52,9 @@ typedef struct {
 typedef struct {
     bool valid;
     int clip_index;
+    int audio_clip_index;
     int media_id;
+    int audio_media_id;
     bool source_mode;
 } muzza_playback_session_state;
 

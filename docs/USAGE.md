@@ -1,0 +1,20 @@
+# Usage Guide
+
+## Basic Operations
+* **Import Media**: Click the `+` tile in the Media Bin to open the in-app browser and select files.
+* **Insert to Timeline**: Drag media from the Media Bin onto a Timeline track. The system automatically splits video and audio.
+* **Move Clips**: Left-click and drag any clip on the timeline to move it across tracks or time.
+* **Adjust Track Height**: Drag the bottom edge of a track to resize it. Audio waveforms will scale automatically.
+* **Scrub Playhead**: Left-click or drag on the timeline ruler or empty space to move the playhead.
+
+## Shortcuts
+| Key | Action |
+|---|---|
+| `Space` | Toggle Play/Pause |
+| `Esc` | Quit Application |
+| `Left Click` | Select Clip / Scrub Timeline |
+| `Right Click` | Open Media context menu (Insert/Delete) |
+
+## Preview Modes
+* **Source Preview**: Select a media item in the Media Bin to preview the original file in the monitor.
+* **Timeline Preview**: The monitor automatically switches to composite mode when the playhead is over active clips.

@@ -24,6 +24,7 @@ typedef struct {
     bool active;
     int media_id;
     int track_index;
+    muzza_clip_type type;
     double tl_start;
     double tl_duration;
     double media_in;
@@ -183,6 +184,7 @@ static bool finalize_clip_section(muzza_project* proj, clip_parse_state* clip) {
         proj,
         clip->media_id,
         clip->track_index,
+        clip->type,
         clip->tl_start,
         clip->tl_duration,
         clip->media_in
@@ -223,6 +225,15 @@ void project_destroy(muzza_project* proj) {
     for (size_t i = 0; i < proj->num_media; ++i) {
         if (proj->media_pool[i].dec) {
             decoder_destroy(proj->media_pool[i].dec);
+        }
+        if (proj->media_pool[i].waveform.peaks) {
+            free(proj->media_pool[i].waveform.peaks);
+        }
+    }
+
+    for (size_t i = 0; i < proj->num_clips; ++i) {
+        if (proj->clips[i].dec) {
+            decoder_destroy(proj->clips[i].dec);
         }
     }
 
@@ -312,12 +323,20 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
     }
 
     if (!media->dec) {
-        media->dec = decoder_create(ctx, media->filepath);
+        media->dec = decoder_create(ctx, media->filepath, MUZZA_DECODER_BOTH);
         if (media->dec) {
             media->has_video = decoder_has_video(media->dec);
             media->has_audio = decoder_has_audio(media->dec);
             if (media->duration <= 0.0) {
                 media->duration = decoder_get_duration(media->dec);
+            }
+
+            if (media->has_audio && !media->waveform.peaks) {
+                media->waveform.num_peaks = 1000;
+                media->waveform.peaks = calloc(media->waveform.num_peaks, sizeof(float));
+                if (media->waveform.peaks) {
+                    decoder_generate_waveform(media->filepath, media->waveform.peaks, media->waveform.num_peaks);
+                }
             }
         }
     }
@@ -325,7 +344,23 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
     return media->dec;
 }
 
-int project_add_clip(muzza_project* proj, int media_id, int track, double start, double dur, double media_in) {
+muzza_decoder* project_ensure_clip_decoder(muzza_project* proj, int clip_index, fx_context* ctx) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips || !ctx) {
+        return NULL;
+    }
+    
+    muzza_clip* clip = &proj->clips[clip_index];
+    if (!clip->dec) {
+        muzza_media* media = project_get_media(proj, clip->media_id);
+        if (media) {
+            muzza_decoder_mode mode = (clip->type == MUZZA_CLIP_VIDEO) ? MUZZA_DECODER_VIDEO : MUZZA_DECODER_AUDIO;
+            clip->dec = decoder_create(ctx, media->filepath, mode);
+        }
+    }
+    return clip->dec;
+}
+
+int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_type type, double start, double dur, double media_in) {
     muzza_clip* clip = NULL;
 
     if (!proj || media_id < 0 || (size_t)media_id >= proj->num_media) {
@@ -344,6 +379,7 @@ int project_add_clip(muzza_project* proj, int media_id, int track, double start,
     memset(clip, 0, sizeof(*clip));
     clip->media_id = media_id;
     clip->track_index = track;
+    clip->type = type;
     clip->tl_start = start < 0.0 ? 0.0 : start;
     clip->tl_duration = dur;
     clip->media_in = media_in < 0.0 ? 0.0 : media_in;
@@ -361,6 +397,10 @@ void project_remove_clip(muzza_project* proj, int index) {
 
     if (!proj || index < 0 || idx >= proj->num_clips) {
         return;
+    }
+
+    if (proj->clips[idx].dec) {
+        decoder_destroy(proj->clips[idx].dec);
     }
 
     if (idx + 1 < proj->num_clips) {
@@ -401,9 +441,18 @@ int project_find_clip_at_time(const muzza_project* proj, double time_seconds) {
             continue;
         }
 
-        if (clip->track_index >= highest_track) {
+        // Prefer video clips for the active slot so monitor preview works
+        bool is_video = (clip->type == MUZZA_CLIP_VIDEO);
+        bool found_is_video = (found >= 0 && proj->clips[found].type == MUZZA_CLIP_VIDEO);
+
+        if (is_video && !found_is_video) {
             highest_track = clip->track_index;
             found = (int)i;
+        } else if (is_video == found_is_video) {
+            if (clip->track_index >= highest_track) {
+                highest_track = clip->track_index;
+                found = (int)i;
+            }
         }
     }
 
@@ -480,6 +529,7 @@ bool project_save(muzza_project* proj, const char* filepath) {
         fprintf(file, "\n[Clip %zu]\n", i);
         fprintf(file, "media=%d\n", clip->media_id);
         fprintf(file, "track=%d\n", clip->track_index);
+        fprintf(file, "type=%d\n", (int)clip->type);
         fprintf(file, "start=%.6f\n", clip->tl_start);
         fprintf(file, "dur=%.6f\n", clip->tl_duration);
         fprintf(file, "in=%.6f\n", clip->media_in);
@@ -586,6 +636,8 @@ muzza_project* project_load(const char* filepath) {
                 clip.media_id = atoi(value);
             } else if (strcmp(key, "track") == 0) {
                 clip.track_index = atoi(value);
+            } else if (strcmp(key, "type") == 0) {
+                clip.type = (muzza_clip_type)atoi(value);
             } else if (strcmp(key, "start") == 0) {
                 clip.tl_start = strtod(value, NULL);
             } else if (strcmp(key, "dur") == 0) {
