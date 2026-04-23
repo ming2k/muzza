@@ -15,16 +15,19 @@
     * Pixel-perfect real-time audio waveform rendering.
     * Source / Timeline dual-mode preview.
 * **Resource Management**
-    * In-app filesystem browser for imports.
+    * In-app filesystem browser for imports in an independent top-level window.
     * Project serialization (.muzza format).
     * Dynamic track height adjustment.
 * **Output**
     * Full export/render pipeline for finalized videos (MP4 with H.264 + AAC).
     * Background-thread export with live progress UI and cancel support.
+    * Export completion feedback (Export button becomes "CLOSE" when done).
 * **UX**
     * Toolbar with Select and Razor mode buttons.
     * Custom on-canvas tool cursors (razor blade, trim arrows) since OS cursor changes are unsupported.
     * Keyboard shortcuts `V` (Select) and `C` (Razor).
+    * Independent floating Export / Import dialog windows with compositor-managed dragging.
+    * HiDPI-aware dialog scaling across multiple displays.
 
 ## Planned
 * **Advanced Editing**
@@ -33,5 +36,3 @@
 * **Audio Enhancement**
     * Independent track volume gain.
     * Audio crossfades.
-* **Output**
-    * Full export/render pipeline for finalized videos.

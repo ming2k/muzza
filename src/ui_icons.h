@@ -43,4 +43,88 @@ static inline void draw_icon_clip(fx_canvas* c, float x, float y, float size, fx
     fx_path_destroy(path);
 }
 
+// Draws a Close icon (X)
+static inline void draw_icon_close(fx_canvas* c, float x, float y, float size, fx_color color) {
+    fx_path* p = fx_path_create();
+    float pad = size * 0.25f;
+    fx_path_move_to(p, x + pad, y + pad);
+    fx_path_line_to(p, x + size - pad, y + size - pad);
+    fx_path_move_to(p, x + size - pad, y + pad);
+    fx_path_line_to(p, x + pad, y + size - pad);
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    paint.stroke_width = size * 0.12f;
+    paint.line_cap = FX_CAP_ROUND;
+    fx_stroke_path(c, p, &paint);
+    fx_path_destroy(p);
+}
+
+// Draws an Up-arrow icon
+static inline void draw_icon_arrow_up(fx_canvas* c, float x, float y, float size, fx_color color) {
+    fx_path* p = fx_path_create();
+    float cx = x + size * 0.5f;
+    float top = y + size * 0.2f;
+    float stem_bottom = y + size * 0.8f;
+    float wing = size * 0.3f;
+    fx_path_move_to(p, cx, top);
+    fx_path_line_to(p, cx - wing, y + size * 0.55f);
+    fx_path_move_to(p, cx, top);
+    fx_path_line_to(p, cx + wing, y + size * 0.55f);
+    fx_path_move_to(p, cx, top + size * 0.1f);
+    fx_path_line_to(p, cx, stem_bottom);
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    paint.stroke_width = size * 0.1f;
+    paint.line_cap = FX_CAP_ROUND;
+    paint.line_join = FX_JOIN_ROUND;
+    fx_stroke_path(c, p, &paint);
+    fx_path_destroy(p);
+}
+
+// Draws a Down-arrow icon
+static inline void draw_icon_arrow_down(fx_canvas* c, float x, float y, float size, fx_color color) {
+    fx_path* p = fx_path_create();
+    float cx = x + size * 0.5f;
+    float bottom = y + size * 0.8f;
+    float stem_top = y + size * 0.2f;
+    float wing = size * 0.3f;
+    fx_path_move_to(p, cx, bottom);
+    fx_path_line_to(p, cx - wing, y + size * 0.45f);
+    fx_path_move_to(p, cx, bottom);
+    fx_path_line_to(p, cx + wing, y + size * 0.45f);
+    fx_path_move_to(p, cx, bottom - size * 0.1f);
+    fx_path_line_to(p, cx, stem_top);
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    paint.stroke_width = size * 0.1f;
+    paint.line_cap = FX_CAP_ROUND;
+    paint.line_join = FX_JOIN_ROUND;
+    fx_stroke_path(c, p, &paint);
+    fx_path_destroy(p);
+}
+
+// Draws a Folder icon
+static inline void draw_icon_folder(fx_canvas* c, float x, float y, float size, fx_color color) {
+    float body_w = size * 0.85f;
+    float body_h = size * 0.55f;
+    float tab_w = size * 0.35f;
+    float tab_h = size * 0.18f;
+    fx_rect tab = { x + size * 0.08f, y, tab_w, tab_h };
+    fx_rect body = { x + size * 0.08f, y + tab_h - 1.0f, body_w, body_h };
+    fx_fill_rect(c, &tab, color);
+    fx_fill_rect(c, &body, color);
+}
+
+// Draws a Document/File icon
+static inline void draw_icon_file(fx_canvas* c, float x, float y, float size, fx_color color) {
+    float w = size * 0.65f;
+    float h = size * 0.8f;
+    float fold = size * 0.22f;
+    fx_rect body = { x + size * 0.175f, y + size * 0.08f, w, h };
+    fx_fill_rect(c, &body, color);
+    fx_rect corner = { x + size * 0.175f + w - fold, y + size * 0.08f, fold, fold };
+    fx_color corner_color = 0xFFBCC7CE;
+    fx_fill_rect(c, &corner, corner_color);
+}
+
 #endif

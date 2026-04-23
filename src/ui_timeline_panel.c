@@ -76,7 +76,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     int trim_hover_clip = -1;
     int trim_hover_edge = 0;
 
-    if (!proj || state->import_browser.visible || state->export_panel.visible) {
+    if (!proj) {
         return;
     }
 

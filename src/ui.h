@@ -93,6 +93,11 @@ typedef struct {
     float progress;
     char output_path[512];
     char status_msg[256];
+    float pos_x;        /* 0 = auto-center on next show */
+    float pos_y;        /* 0 = auto-center on next show */
+    bool is_dragging;
+    float drag_offset_x;
+    float drag_offset_y;
 } muzza_export_panel_state;
 
 typedef struct {

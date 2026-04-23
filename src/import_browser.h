@@ -18,6 +18,11 @@ typedef struct {
     int num_files;
     int selected_index;
     int scroll;
+    float pos_x;        /* 0 = auto-center on next show */
+    float pos_y;        /* 0 = auto-center on next show */
+    bool is_dragging;
+    float drag_offset_x;
+    float drag_offset_y;
 } muzza_import_browser_state;
 
 void import_browser_init(muzza_import_browser_state* state);

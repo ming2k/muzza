@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.5 - 2026-04-23
+
+Independent dialog windows, multi-surface rendering, and improved UI icons.
+
+### Added
+
+- **Independent Dialog Windows**: Export and Import dialogs are now true Wayland-compositor-managed top-level windows (`xdg_toplevel`), draggable outside the main window boundary.
+- **SDL Hit-Test Dragging**: Borderless dialog windows use `SDL_SetWindowHitTest` with `SDL_HITTEST_DRAGGABLE` on the header bar; the compositor handles window movement.
+- **Multi-Surface Rendering**: Each dialog owns an independent `SDL_Window` + `fx_surface`; the main render loop acquires and presents all visible surfaces per frame.
+- **Dynamic Surface Resizing**: Dialog `fx_surface` dimensions automatically synchronize with `SDL_GetWindowSizeInPixels` via `fx_surface_resize` when moved across displays.
+- **New UI Icons**: Added `draw_icon_close` (X), `draw_icon_arrow_up/down`, `draw_icon_folder`, and `draw_icon_file` to `ui_icons.h` for consistent visual language across dialogs.
+- **Export Completion Feedback**: When export finishes, the Export button transforms into a "CLOSE" button with accent color to signal completion.
+- **`fx_context_get_instance`**: Added to the `flux` public API to enable multi-window Vulkan surface creation from a shared context.
+
+### Changed
+
+- Export and Import dialogs no longer draw a full-screen modal overlay; they render as non-blocking first-class windows.
+- Dialog coordinate systems switched from parent-window-relative to window-local (0,0 origin).
+- `ui_handle_event` routes input by `windowID`; keyboard shortcuts (`Esc`, `Space`, `Delete`) are window-aware.
+
+### Fixed
+
+- Fixed dialog mouse hit-testing misalignment caused by mixing logical and pixel window sizes.
+- Fixed blank dialog surfaces by ensuring `fx_surface_create_vulkan` uses actual pixel dimensions from `SDL_GetWindowSizeInPixels`.
+- Fixed main window "freeze" where `ui_media_panel` and `ui_timeline_panel` incorrectly blocked interaction when a dialog was marked visible.
+
 ## v0.1.4 - 2026-04-23
 
 Timeline editing tools: clip trimming, razor splitting, and custom cursor visuals.

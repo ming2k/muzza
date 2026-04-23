@@ -4,18 +4,17 @@
 
 #include "import_browser.h"
 #include "path_utils.h"
+#include "ui_icons.h"
 #include "ui_shared.h"
 #include "ui_text.h"
 
-void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actions) {
+void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actions, int win_w, int win_h) {
     muzza_import_browser_state* browser = &state->import_browser;
     float s = state->ui_scale > 1.0f ? state->ui_scale : 1.0f;
-    float overlay_w = (float)state->window_width;
-    float overlay_h = (float)state->window_height;
-    float panel_w = ui_clampf(overlay_w * 0.58f, 520.0f * s, 860.0f * s);
-    float panel_h = ui_clampf(overlay_h * 0.72f, 360.0f * s, 680.0f * s);
-    float panel_x = (overlay_w - panel_w) * 0.5f;
-    float panel_y = (overlay_h - panel_h) * 0.5f;
+    float panel_w = (float)win_w;
+    float panel_h = (float)win_h;
+    float panel_x = 0.0f;
+    float panel_y = 0.0f;
     float list_x = panel_x + 18.0f * s;
     float list_y = panel_y + 84.0f * s;
     float list_w = panel_w - 36.0f * s;
@@ -54,7 +53,7 @@ void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
         can_import = !selected->is_dir;
     }
 
-    ui_draw_rect(canvas, 0.0f, 0.0f, overlay_w, overlay_h, MUZZA_COLOR_BG_OVERLAY);
+    /* Panel background */
     ui_draw_rect(canvas, panel_x, panel_y, panel_w, panel_h, MUZZA_COLOR_BG_PANEL);
     ui_draw_rect(canvas, panel_x, panel_y, panel_w, 42.0f * s, MUZZA_COLOR_BG_HEADER);
     ui_draw_border(canvas, panel_x, panel_y, panel_w, panel_h, s, MUZZA_COLOR_BORDER);
@@ -64,13 +63,12 @@ void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
     ui_draw_text(canvas, panel_x + 56.0f * s, panel_y + 56.0f * s, "DIR", 1.0f * s, 0xFF7C8A92);
     ui_draw_text_ellipsis(canvas, panel_x + 84.0f * s, panel_y + 56.0f * s, panel_w - 132.0f * s, browser->current_dir, 1.0f * s, 0xFFCAD3D9);
 
+    /* Up button */
     ui_draw_rect(canvas, up_x, panel_y + 52.0f * s, 28.0f * s, 18.0f * s, MUZZA_COLOR_ACCENT_DIM);
-    ui_draw_rect(canvas, up_x + 7.0f * s, panel_y + 59.0f * s, 13.0f * s, 4.0f * s, 0xFFE7F4F3);
-    ui_draw_rect(canvas, up_x + 7.0f * s, panel_y + 55.0f * s, 4.0f * s, 8.0f * s, 0xFFE7F4F3);
+    draw_icon_arrow_up(canvas, up_x + 2.0f * s, panel_y + 53.0f * s, 14.0f * s, 0xFFE7F4F3);
 
-    ui_draw_rect(canvas, close_x, panel_y + 10.0f * s, 24.0f * s, 24.0f * s, MUZZA_COLOR_TRACK_ALT);
-    ui_draw_rect(canvas, close_x + 6.0f * s, panel_y + 16.0f * s, 12.0f * s, 3.0f * s, 0xFFE7F4F3);
-    ui_draw_rect(canvas, close_x + 6.0f * s, panel_y + 19.0f * s, 12.0f * s, 3.0f * s, 0xFFE7F4F3);
+    /* Close button */
+    draw_icon_close(canvas, close_x, panel_y + 10.0f * s, 24.0f * s, 0xFFE7F4F3);
 
     ui_draw_rect(canvas, list_x, list_y, list_w, list_h, MUZZA_COLOR_TRACK_BG);
     ui_draw_border(canvas, list_x, list_y, list_w, list_h, s, MUZZA_COLOR_BORDER);
@@ -94,11 +92,9 @@ void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
             ui_draw_rect(canvas, list_x + 16.0f * s, row_y + 8.0f * s, 14.0f * s, 4.0f * s, MUZZA_COLOR_ACCENT);
             ui_draw_rect(canvas, list_x + 16.0f * s, row_y + 8.0f * s, 4.0f * s, 10.0f * s, MUZZA_COLOR_ACCENT);
         } else if (file->is_dir) {
-            ui_draw_rect(canvas, list_x + 16.0f * s, row_y + 7.0f * s, 18.0f * s, 14.0f * s, 0xFFE3BE5A);
-            ui_draw_rect(canvas, list_x + 18.0f * s, row_y + 5.0f * s, 8.0f * s, 4.0f * s, 0xFFE3BE5A);
+            draw_icon_folder(canvas, list_x + 14.0f * s, row_y + 5.0f * s, 18.0f * s, 0xFFE3BE5A);
         } else {
-            ui_draw_rect(canvas, list_x + 16.0f * s, row_y + 6.0f * s, 14.0f * s, 16.0f * s, 0xFF87949C);
-            ui_draw_rect(canvas, list_x + 22.0f * s, row_y + 6.0f * s, 8.0f * s, 4.0f * s, 0xFFBCC7CE);
+            draw_icon_file(canvas, list_x + 14.0f * s, row_y + 5.0f * s, 18.0f * s, 0xFF87949C);
         }
 
         ui_draw_text_ellipsis(canvas, list_x + 44.0f * s, row_y + 8.0f * s, list_w - 126.0f * s, file->name, 1.0f * s, 0xFFCAD3D9);
@@ -120,9 +116,9 @@ void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
         float scroll_down_y = list_y + list_h - 34.0f * s;
 
         ui_draw_rect(canvas, scroll_x, scroll_up_y, 14.0f * s, 18.0f * s, MUZZA_COLOR_TRACK_ALT);
-        ui_draw_rect(canvas, scroll_x + 4.0f * s, scroll_up_y + 7.0f * s, 6.0f * s, 3.0f * s, 0xFFE7F4F3);
+        draw_icon_arrow_up(canvas, scroll_x + 1.0f * s, scroll_up_y + 2.0f * s, 10.0f * s, 0xFFE7F4F3);
         ui_draw_rect(canvas, scroll_x, scroll_down_y, 14.0f * s, 18.0f * s, MUZZA_COLOR_TRACK_ALT);
-        ui_draw_rect(canvas, scroll_x + 4.0f * s, scroll_down_y + 8.0f * s, 6.0f * s, 3.0f * s, 0xFFE7F4F3);
+        draw_icon_arrow_down(canvas, scroll_x + 1.0f * s, scroll_down_y + 2.0f * s, 10.0f * s, 0xFFE7F4F3);
 
         if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, scroll_x, scroll_up_y, 14.0f * s, 18.0f * s) && browser->scroll > 0) {
             browser->scroll--;
