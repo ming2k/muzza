@@ -97,6 +97,9 @@ void ui_state_init(muzza_ui_state* state, muzza_project* project) {
     state->media_panel.dragged_media_index = -1;
     state->timeline.selected_clip_index = -1;
     state->timeline.active_clip_index = -1;
+    state->timeline.playhead_time = 0.0;
+    state->timeline.zoom = 100.0f; // 100 pixels per second default
+    state->timeline.scroll_x = 0.0;
     state->preview.preview_media_index = -1;
     state->playback.clip_index = -1;
     state->playback.media_id = -1;
@@ -112,6 +115,10 @@ void ui_begin_frame(muzza_ui_state* state) {
     state->input.left_released = false;
     state->input.right_pressed = false;
     state->input.right_released = false;
+    state->input.zoom_in_pressed = false;
+    state->input.zoom_out_pressed = false;
+    state->input.wheel_x = 0.0f;
+    state->input.wheel_y = 0.0f;
 }
 
 void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* window) {
@@ -148,6 +155,23 @@ void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* 
         state->input.y = event->button.y * scale;
         state->input.right_down = false;
         state->input.right_released = true;
+    } else if (event->type == SDL_EVENT_MOUSE_WHEEL) {
+        state->input.wheel_x = event->wheel.x;
+        state->input.wheel_y = event->wheel.y;
+    } else if (event->type == SDL_EVENT_KEY_DOWN) {
+        switch (event->key.key) {
+            case SDLK_LCTRL: case SDLK_RCTRL: state->input.ctrl_down = true; break;
+            case SDLK_LSHIFT: case SDLK_RSHIFT: state->input.shift_down = true; break;
+            case SDLK_LALT: case SDLK_RALT: state->input.alt_down = true; break;
+            case SDLK_EQUALS: case SDLK_KP_PLUS: state->input.zoom_in_pressed = true; break;
+            case SDLK_MINUS: case SDLK_KP_MINUS: state->input.zoom_out_pressed = true; break;
+        }
+    } else if (event->type == SDL_EVENT_KEY_UP) {
+        switch (event->key.key) {
+            case SDLK_LCTRL: case SDLK_RCTRL: state->input.ctrl_down = false; break;
+            case SDLK_LSHIFT: case SDLK_RSHIFT: state->input.shift_down = false; break;
+            case SDLK_LALT: case SDLK_RALT: state->input.alt_down = false; break;
+        }
     }
 }
 

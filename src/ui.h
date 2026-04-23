@@ -12,12 +12,19 @@
 typedef struct {
     float x;
     float y;
+    float wheel_x;
+    float wheel_y;
     bool left_down;
     bool left_pressed;
     bool left_released;
     bool right_down;
     bool right_pressed;
     bool right_released;
+    bool ctrl_down;
+    bool shift_down;
+    bool alt_down;
+    bool zoom_in_pressed;
+    bool zoom_out_pressed;
 } muzza_input_state;
 
 typedef struct {
@@ -39,7 +46,10 @@ typedef struct {
     double drag_start_offset;
     int selected_clip_index;
     int active_clip_index;
-    float playhead_pos;
+    double playhead_time;
+
+    float zoom;      // pixels per second (unscaled by ui_scale)
+    double scroll_x; // time offset in seconds
 } muzza_timeline_state;
 
 typedef struct {

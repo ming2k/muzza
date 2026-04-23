@@ -75,15 +75,15 @@ void playback_reset_session(muzza_ui_state* ui) {
 
 static void update_timeline_preview(fx_context* ctx, muzza_project* project, muzza_ui_state* ui, double delta_time) {
     // 1. Advance Playhead by delta_time (The Master Clock)
-    if (ui->is_playing && !ui->timeline.is_scrubbing && project->duration > 0.0) {
-        ui->timeline.playhead_pos += (float)(delta_time / project->duration);
-        if (ui->timeline.playhead_pos >= 1.0f) {
-            ui->timeline.playhead_pos = 1.0f;
+    if (ui->is_playing && !ui->timeline.is_scrubbing) {
+        ui->timeline.playhead_time += delta_time;
+        if (project->duration > 0.0 && ui->timeline.playhead_time >= project->duration) {
+            ui->timeline.playhead_time = project->duration;
             ui->is_playing = false;
         }
     }
 
-    double timeline_time = ui->timeline.playhead_pos * project->duration;
+    double timeline_time = ui->timeline.playhead_time;
     int v_clip_idx = find_top_video_clip(project, timeline_time);
     int a_clips[16];
     int num_a_clips = find_active_audio_clips(project, timeline_time, a_clips, 16);

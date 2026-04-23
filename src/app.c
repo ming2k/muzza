@@ -155,7 +155,7 @@ static bool insert_media_into_timeline(muzza_app* app, int media_id, double star
         duration = media->duration;
     }
 
-    start_time = start_time_override >= 0.0 ? start_time_override : app->ui.timeline.playhead_pos * app->project->duration;
+    start_time = start_time_override >= 0.0 ? start_time_override : app->ui.timeline.playhead_time;
     if (start_time < 0.0) {
         start_time = 0.0;
     }

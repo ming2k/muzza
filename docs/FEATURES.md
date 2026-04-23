@@ -4,6 +4,7 @@
 * **Core Editing**
     * Automatic A/V track splitting on drop.
     * Independent clip dragging and track management.
+    * Timeline Zooming and Horizontal Scrolling.
     * Multi-track real-time audio mixing support.
 * **Preview System**
     * Industrial-grade master-clock AV sync engine.

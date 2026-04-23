@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.2 - 2026-04-23
+
+Added Timeline Zooming and Horizontal Scrolling for improved navigation in large projects.
+
+### Added
+
+- **Timeline Zooming**: Implemented high-precision zooming centered on the mouse cursor using `Ctrl` + `Mouse Wheel` or keyboard shortcuts (`=` and `-`).
+- **Horizontal Scrolling**: Added support for horizontal timeline navigation using the `Mouse Wheel`.
+- **Adaptive Time Ruler**: The timeline ruler now dynamically adjusts its tick frequency (from 10s down to 0.1s) based on the current zoom level.
+- **Precision Playhead**: Upgraded the internal playhead from a normalized percentage to an absolute double-precision time value, enabling frame-perfect accuracy at high zoom levels.
+- **Visual Improvements**: Audio waveforms and clip labels now scale smoothly with zoom, and off-screen clips are automatically culled during rendering for better performance.
+
 ## v0.1.1 - 2026-04-23
 
 Industrial-grade playback engine refactor with independent track management, accurate seeking, and high-fidelity audio visualization.

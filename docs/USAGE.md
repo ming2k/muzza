@@ -6,11 +6,16 @@
 * **Move Clips**: Left-click and drag any clip on the timeline to move it across tracks or time.
 * **Adjust Track Height**: Drag the bottom edge of a track to resize it. Audio waveforms will scale automatically.
 * **Scrub Playhead**: Left-click or drag on the timeline ruler or empty space to move the playhead.
+* **Timeline Zoom**: Use `Ctrl` + `Mouse Wheel` or the `=` and `-` keys to zoom in and out of the timeline. The zoom is centered on your mouse position.
+* **Timeline Scroll**: Use the `Mouse Wheel` to scroll the timeline horizontally.
 
 ## Shortcuts
 | Key | Action |
 |---|---|
 | `Space` | Toggle Play/Pause |
+| `Ctrl` + `Wheel` | Zoom Timeline |
+| `=` / `-` | Zoom In / Out |
+| `Wheel` | Scroll Timeline Horizontally |
 | `Esc` | Quit Application |
 | `Left Click` | Select Clip / Scrub Timeline |
 | `Right Click` | Open Media context menu (Insert/Delete) |
