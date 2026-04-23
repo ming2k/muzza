@@ -84,7 +84,7 @@ void ui_draw_media_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_acti
     const float footer_h = 74.0f * s;
     const int columns = (int)((w - pad * 2.0f + gap) / (tile_w + gap));
     int safe_columns = columns > 0 ? columns : 1;
-    bool allow_interaction = !state->import_browser.visible;
+    bool allow_interaction = !state->import_browser.visible && !state->export_panel.visible;
     bool clicked_empty = false;
     bool consumed_click = false;
 

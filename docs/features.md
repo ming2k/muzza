@@ -15,6 +15,9 @@
     * In-app filesystem browser for imports.
     * Project serialization (.muzza format).
     * Dynamic track height adjustment.
+* **Output**
+    * Full export/render pipeline for finalized videos (MP4 with H.264 + AAC).
+    * Background-thread export with live progress UI and cancel support.
 
 ## Planned
 * **Advanced Editing**

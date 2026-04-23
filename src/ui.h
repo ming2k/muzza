@@ -69,6 +69,17 @@ typedef struct {
 } muzza_playback_session_state;
 
 typedef struct {
+    bool visible;
+    bool is_exporting;
+    bool cancel_requested;
+    bool show_progress;
+    int status; /* 0=idle, 1=running, 2=done, 3=cancelled, 4=error */
+    float progress;
+    char output_path[512];
+    char status_msg[256];
+} muzza_export_panel_state;
+
+typedef struct {
     int window_width;
     int window_height;
     float ui_scale;
@@ -85,12 +96,15 @@ typedef struct {
     muzza_timeline_state timeline;
     muzza_preview_state preview;
     muzza_playback_session_state playback;
+    muzza_export_panel_state export_panel;
 } muzza_ui_state;
 
 typedef struct {
     bool toggle_playback;
     bool open_import_browser;
     bool close_import_browser;
+    bool open_export_panel;
+    bool start_export;
     int delete_media_id;
     int insert_media_id;
     int insert_track_index;

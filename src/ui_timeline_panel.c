@@ -74,7 +74,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     float current_y = y + 38.0f * s;
     int clicked_clip = -1;
 
-    if (!proj || state->import_browser.visible) {
+    if (!proj || state->import_browser.visible || state->export_panel.visible) {
         return;
     }
 

@@ -8,10 +8,13 @@ The project is split into distinct layers to ensure high cohesion and low coupli
     * `src/decoder.[ch]`: **Hardware Abstraction**. Wraps FFmpeg pipelines, providing frame-accurate seeking and audio sampling.
 * **Data Model Layer**
     * `src/project.[ch]`: **State Container**. Defines Project, Media, and Clip structures; manages the lifecycle of clip-specific decoders.
+* **Export Pipeline Layer**
+    * `src/exporter.[ch]`: **Headless Renderer**. Traverses the timeline, decodes source media via independent FFmpeg contexts, encodes to H.264/AAC, and muxes to MP4 on a background SDL thread.
 * **UI Presentation Layer**
     * `src/ui_timeline_panel.[ch]`: Timeline interactions and waveform visualization.
     * `src/ui_media_panel.[ch]`: Media Bin management.
     * `src/ui_monitor_panel.[ch]`: Preview viewport rendering.
+    * `src/ui_export_panel.[ch]`: Export dialog modal with live progress and cancel support.
 * **Infrastructure**
     * `src/import_browser.[ch]`: Cross-platform filesystem navigation.
     * `src/ui_shared.[ch]`: Rendering primitives and visual theme constants.

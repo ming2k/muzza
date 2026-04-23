@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.3 - 2026-04-23
+
+Full export/render pipeline with background-thread encoding, live progress UI, and independent video/audio decoder isolation.
+
+### Added
+
+- **Export/Render Pipeline**: Implemented `src/exporter.[ch]` providing headless FFmpeg-based MP4 export (H.264 video + AAC audio) with timeline traversal, frame composition, and multi-track audio mixing.
+- **Background Thread Export**: Export runs on a dedicated SDL thread so the UI remains fully responsive with a smooth 60 FPS progress bar.
+- **Export Dialog UI**: Added `src/ui_export_panel.[ch]` featuring a modal overlay with live progress bar, status messages, and Cancel support.
+- **Export Trigger**: New "EXPORT" button in the top header bar opens the export dialog.
+- **Audio Mixing**: Simple additive audio mixing with per-track gain attenuation (`1/sqrt(n)`) and soft-limiting saturation for clean multi-track output.
+- **Independent Decoder Instances**: Video and audio export decoders now open separate file handles to prevent cross-stream packet loss.
+
+### Fixed
+
+- Eliminated H.264 "reference picture missing" decode errors caused by shared `AVFormatContext` dropping interleaved packets.
+- Fixed audio silence in exported files caused by `src_dec_refill_audio` never executing due to a zero-length buffer target.
+- Fixed video stuttering (keyframes-only playback) by reducing seek frequency and decoding forward to the exact target PTS.
+
 ## v0.1.2 - 2026-04-23
 
 Added Timeline Zooming and Horizontal Scrolling for improved navigation in large projects.

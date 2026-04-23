@@ -6,6 +6,7 @@
 - **Industrial-Grade AV Sync**: Multi-instance master-clock architecture ensuring smooth preview and scrubbing.
 - **Decoupled Track Design**: Automatic A/V splitting with independent clip dragging and multi-track mixing.
 - **Visual Feedback**: Real-time pixel-perfect audio waveforms and frame-accurate seeking.
+- **Export & Render**: Background-thread MP4 export (H.264 + AAC) with live progress UI and cancel support.
 - **Modern Architecture**: Vulkan rendering backend with a modular ownership-based model.
 
 ## Quick Start

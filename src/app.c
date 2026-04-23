@@ -4,9 +4,11 @@
 #include <SDL3/SDL_vulkan.h>
 #include <locale.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <vulkan/vulkan.h>
 
+#include "exporter.h"
 #include "flux/flux.h"
 #include "import_browser.h"
 #include "path_utils.h"
@@ -20,6 +22,8 @@ typedef struct {
     fx_surface* surface;
     muzza_project* project;
     muzza_ui_state ui;
+    muzza_exporter* exporter;
+    SDL_Thread* export_thread;
 } muzza_app;
 
 static void normalize_process_locale(void) {
@@ -241,10 +245,35 @@ static muzza_project* create_project_from_args(fx_context* ctx, int argc, char**
     return proj;
 }
 
+static void build_default_export_path(muzza_app* app, char* out, size_t out_size) {
+    const char* base = app->project && app->project->filepath[0] ? app->project->filepath : "untitled";
+    char stem[512] = {0};
+    snprintf(stem, sizeof(stem), "%s", base);
+    char* dot = strrchr(stem, '.');
+    if (dot) *dot = '\0';
+    snprintf(out, out_size, "%s_exported.mp4", stem);
+}
+
+static void cleanup_export(muzza_app* app) {
+    if (!app) return;
+    if (app->exporter && app->export_thread) {
+        exporter_request_cancel(app->exporter);
+        SDL_WaitThread(app->export_thread, NULL);
+        app->export_thread = NULL;
+    }
+    if (app->exporter) {
+        exporter_destroy(app->exporter);
+        app->exporter = NULL;
+    }
+    app->ui.export_panel.is_exporting = false;
+}
+
 static void cleanup_app(muzza_app* app) {
     if (!app) {
         return;
     }
+
+    cleanup_export(app);
 
     if (app->project) {
         project_destroy(app->project);
@@ -321,6 +350,8 @@ int muzza_app_main(int argc, char** argv) {
     app.ui.ui_scale = SDL_GetWindowDisplayScale(app.window);
     import_browser_refresh(&app.ui.import_browser);
     last_ticks = SDL_GetTicks();
+    app.exporter = NULL;
+    app.export_thread = NULL;
 
     while (running) {
         SDL_Event event;
@@ -338,12 +369,18 @@ int muzza_app_main(int argc, char** argv) {
                 fx_surface_resize(app.surface, event.window.data1, event.window.data2);
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
                 if (event.key.key == SDLK_ESCAPE) {
-                    if (app.ui.import_browser.visible) {
+                    if (app.ui.export_panel.visible) {
+                        if (app.ui.export_panel.is_exporting) {
+                            app.ui.export_panel.cancel_requested = true;
+                        } else {
+                            app.ui.export_panel.visible = false;
+                        }
+                    } else if (app.ui.import_browser.visible) {
                         import_browser_close(&app.ui.import_browser);
                     } else {
                         running = false;
                     }
-                } else if (event.key.key == SDLK_SPACE && !app.ui.import_browser.visible) {
+                } else if (event.key.key == SDLK_SPACE && !app.ui.import_browser.visible && !app.ui.export_panel.visible) {
                     app.ui.is_playing = !app.ui.is_playing;
                 }
             }
@@ -357,6 +394,35 @@ int muzza_app_main(int argc, char** argv) {
         }
 
         playback_sync_preview(app.ctx, app.project, &app.ui, delta_time);
+
+        /* Poll export progress */
+        if (app.exporter) {
+            muzza_export_status status = exporter_get_status(app.exporter);
+            app.ui.export_panel.progress = (float)exporter_get_progress(app.exporter);
+            app.ui.export_panel.status = (int)status;
+
+            if (status == MUZZA_EXPORT_ERROR) {
+                snprintf(app.ui.export_panel.status_msg, sizeof(app.ui.export_panel.status_msg),
+                    "%s", exporter_get_error(app.exporter));
+                app.ui.export_panel.is_exporting = false;
+                app.ui.export_panel.show_progress = true;
+                cleanup_export(&app);
+            } else if (status == MUZZA_EXPORT_DONE) {
+                app.ui.export_panel.is_exporting = false;
+                app.ui.export_panel.show_progress = true;
+                app.ui.export_panel.status_msg[0] = '\0';
+                cleanup_export(&app);
+            } else if (status == MUZZA_EXPORT_CANCELLED) {
+                app.ui.export_panel.is_exporting = false;
+                app.ui.export_panel.show_progress = true;
+                snprintf(app.ui.export_panel.status_msg, sizeof(app.ui.export_panel.status_msg),
+                    "Cancelled");
+                cleanup_export(&app);
+            } else if (app.ui.export_panel.cancel_requested) {
+                exporter_request_cancel(app.exporter);
+                app.ui.export_panel.cancel_requested = false;
+            }
+        }
 
         fx_canvas* canvas = fx_surface_acquire(app.surface);
         if (canvas) {
@@ -389,6 +455,41 @@ int muzza_app_main(int argc, char** argv) {
         if (actions.import_path[0] != '\0') {
             if (!import_media_into_project(&app, actions.import_path)) {
                 SDL_Log("Failed to import media: %s", actions.import_path);
+            }
+        }
+        if (actions.open_export_panel) {
+            app.ui.export_panel.visible = true;
+            app.ui.export_panel.is_exporting = false;
+            app.ui.export_panel.progress = 0.0f;
+            app.ui.export_panel.status = 0;
+            app.ui.export_panel.show_progress = false;
+            build_default_export_path(&app, app.ui.export_panel.output_path,
+                sizeof(app.ui.export_panel.output_path));
+        }
+        if (actions.start_export) {
+            if (!app.exporter && app.project && app.project->duration > 0.0) {
+                cleanup_export(&app);
+                app.exporter = exporter_create(app.project, app.ui.export_panel.output_path);
+                if (app.exporter) {
+                    app.export_thread = exporter_start_thread(app.exporter);
+                    if (app.export_thread) {
+                        app.ui.export_panel.is_exporting = true;
+                        app.ui.export_panel.show_progress = true;
+                        app.ui.is_playing = false;
+                    } else {
+                        snprintf(app.ui.export_panel.status_msg, sizeof(app.ui.export_panel.status_msg),
+                            "%s", exporter_get_error(app.exporter));
+                        app.ui.export_panel.status = 4; /* error */
+                        app.ui.export_panel.show_progress = true;
+                        exporter_destroy(app.exporter);
+                        app.exporter = NULL;
+                    }
+                } else {
+                    snprintf(app.ui.export_panel.status_msg, sizeof(app.ui.export_panel.status_msg),
+                        "Failed to initialize exporter");
+                    app.ui.export_panel.status = 4; /* error */
+                    app.ui.export_panel.show_progress = true;
+                }
             }
         }
     }

@@ -5,6 +5,7 @@
 #include "import_browser.h"
 #include "path_utils.h"
 #include "ui_icons.h"
+#include "ui_export_panel.h"
 #include "ui_import_browser_panel.h"
 #include "ui_media_panel.h"
 #include "ui_monitor_panel.h"
@@ -52,7 +53,7 @@ static void update_splitters(muzza_ui_state* state, float window_width, float wi
     float split_v_px = window_width * state->split_v;
     float split_h_px = window_height * state->split_h;
 
-    if (state->import_browser.visible) {
+    if (state->import_browser.visible || state->export_panel.visible) {
         if (state->input.left_released) {
             state->is_dragging_splitter_v = false;
             state->is_dragging_splitter_h = false;
@@ -206,10 +207,22 @@ void ui_render(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actio
         draw_icon_play(canvas, 9.0f * scale, 8.0f * scale, 16.0f * scale, 0xFFD7DEE3);
     }
 
-    if (!state->import_browser.visible
+    /* Export button in header */
+    float export_btn_x = window_w - 180.0f * scale;
+    float export_btn_w = 70.0f * scale;
+    ui_draw_rect(canvas, export_btn_x, 7.0f * scale, export_btn_w, 18.0f * scale, MUZZA_COLOR_ACCENT);
+    ui_draw_text_centered(canvas, export_btn_x, 7.0f * scale, export_btn_w, 18.0f * scale, "EXPORT", 1.0f * scale, 0xFFF0F7F6);
+
+    if (!state->import_browser.visible && !state->export_panel.visible
         && state->input.left_pressed
         && ui_point_in_rect(state->input.x, state->input.y, 8.0f * scale, 7.0f * scale, 18.0f * scale, 18.0f * scale)) {
         actions->toggle_playback = true;
+    }
+
+    if (!state->import_browser.visible && !state->export_panel.visible
+        && state->input.left_pressed
+        && ui_point_in_rect(state->input.x, state->input.y, export_btn_x, 7.0f * scale, export_btn_w, 18.0f * scale)) {
+        actions->open_export_panel = true;
     }
 
     ui_draw_panel(canvas, 0.0f, menu_h, left_w, top_h - menu_h, scale, MUZZA_COLOR_ACCENT);
@@ -221,6 +234,7 @@ void ui_render(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actio
     ui_draw_timeline_panel(canvas, state, actions, 0.0f, top_h, window_w, window_h - top_h);
     ui_draw_media_drag_overlay(canvas, state);
     ui_draw_import_browser(canvas, state, actions);
+    ui_draw_export_panel(canvas, state, actions);
 
     if (state->input.left_released) {
         state->media_panel.is_dragging_media = false;
