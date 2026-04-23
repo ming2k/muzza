@@ -136,7 +136,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
 
             if (new_media_in < 0.0) { new_media_in = 0.0; new_start = timeline->trim_original_start - timeline->trim_original_media_in; new_dur = old_end - new_start; }
             if (new_dur < 0.1) { new_dur = 0.1; new_start = old_end - 0.1; new_media_in = timeline->trim_original_media_in + (new_start - timeline->trim_original_start); }
-            if (new_media_in + new_dur > media_dur && media_dur > 0.0) {
+            if (new_media_in + new_dur > media_dur && media_dur > 0.0 && !(media && media->is_image)) {
                 double overflow = (new_media_in + new_dur) - media_dur;
                 new_media_in -= overflow;
                 new_start -= overflow;
@@ -152,7 +152,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
             // Right trim: adjust tl_duration, keep left edge fixed
             double new_dur = mouse_time - timeline->trim_original_start;
             if (new_dur < 0.1) new_dur = 0.1;
-            if (timeline->trim_original_media_in + new_dur > media_dur && media_dur > 0.0) {
+            if (timeline->trim_original_media_in + new_dur > media_dur && media_dur > 0.0 && !(media && media->is_image)) {
                 new_dur = media_dur - timeline->trim_original_media_in;
             }
             clip->tl_duration = new_dur;

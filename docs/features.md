@@ -15,7 +15,8 @@
     * Pixel-perfect real-time audio waveform rendering.
     * Source / Timeline dual-mode preview.
 * **Resource Management**
-    * In-app filesystem browser for imports in an independent top-level window.
+    * In-app filesystem browser for imports in an independent top-level window with mouse-wheel scrolling and a visual scrollbar.
+    * Static image import and placement (PNG, JPEG, GIF, WebP, BMP, TIFF, etc.) with arbitrary timeline duration.
     * Project serialization (.muzza format).
     * Dynamic track height adjustment.
 * **Output**

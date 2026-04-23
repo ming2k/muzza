@@ -108,12 +108,14 @@ static bool import_media_into_project(muzza_app* app, const char* path) {
         media->duration = decoder_get_duration(dec);
         media->has_video = decoder_has_video(dec);
         media->has_audio = decoder_has_audio(dec);
+        media->is_image = decoder_is_image(dec);
         SDL_Log(
-            "Imported media: %s duration=%.3f video=%d audio=%d",
+            "Imported media: %s duration=%.3f video=%d audio=%d image=%d",
             path,
             media->duration,
             media->has_video ? 1 : 0,
-            media->has_audio ? 1 : 0
+            media->has_audio ? 1 : 0,
+            media->is_image ? 1 : 0
         );
     }
 
@@ -164,7 +166,9 @@ static bool insert_media_into_timeline(muzza_app* app, int media_id, double star
         return false;
     }
 
-    if (media->duration > 0.0) {
+    if (media->is_image) {
+        duration = 5.0;
+    } else if (media->duration > 0.0) {
         duration = media->duration;
     }
 
@@ -311,6 +315,7 @@ static bool dialog_window_create(muzza_app* app, muzza_dialog_window* dlg, const
         SDL_Log("Warning: SDL_SetWindowHitTest failed for dialog");
     }
 
+    SDL_RaiseWindow(dlg->window);
     return true;
 }
 
@@ -459,14 +464,15 @@ int muzza_app_main(int argc, char** argv) {
                 }
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
                 if (event.key.key == SDLK_ESCAPE) {
-                    if (event.window.windowID == export_id) {
+                    if (app.ui.import_browser.visible) {
+                        import_browser_close(&app.ui.import_browser);
+                        dialog_window_destroy(&app, &app.import_dlg);
+                    } else if (event.window.windowID == export_id) {
                         if (app.ui.export_panel.is_exporting) {
                             app.ui.export_panel.cancel_requested = true;
                         } else {
                             app.ui.export_panel.visible = false;
                         }
-                    } else if (event.window.windowID == import_id) {
-                        import_browser_close(&app.ui.import_browser);
                     } else if (event.window.windowID == main_id) {
                         running = false;
                     }
@@ -586,6 +592,7 @@ int muzza_app_main(int argc, char** argv) {
         }
         if (actions.close_import_browser) {
             import_browser_close(&app.ui.import_browser);
+            dialog_window_destroy(&app, &app.import_dlg);
         }
         if (actions.delete_media_id >= 0) {
             project_remove_media(app.project, actions.delete_media_id);

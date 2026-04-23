@@ -12,6 +12,9 @@ static fx_color media_color(const muzza_media* media) {
     if (!media) {
         return MUZZA_COLOR_MEDIA_EMPTY;
     }
+    if (media->is_image) {
+        return MUZZA_COLOR_MEDIA_IMAGE;
+    }
     if (media->has_video && media->has_audio) {
         return MUZZA_COLOR_MEDIA_MIXED;
     }
@@ -128,7 +131,7 @@ void ui_draw_media_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_acti
         draw_media_type_glyph(canvas, media, tx + 30.0f * s, ty + 7.0f * s, 44.0f * s);
         ui_draw_rect(canvas, tx + 10.0f * s, ty + 50.0f * s, tile_w - 20.0f * s, 2.0f * s, tile_color);
         ui_draw_text_ellipsis(canvas, tx + 9.0f * s, ty + 57.0f * s, tile_w - 18.0f * s, muzza_path_basename(media->filepath), 1.0f * s, 0xFFD7DEE3);
-        ui_draw_text(canvas, tx + 9.0f * s, ty + 70.0f * s, media->has_video && media->has_audio ? "A/V" : (media->has_video ? "VIDEO" : (media->has_audio ? "AUDIO" : "EMPTY")), 1.0f * s, tile_color);
+        ui_draw_text(canvas, tx + 9.0f * s, ty + 70.0f * s, media->is_image ? "IMAGE" : (media->has_video && media->has_audio ? "A/V" : (media->has_video ? "VIDEO" : (media->has_audio ? "AUDIO" : "EMPTY"))), 1.0f * s, tile_color);
         ui_draw_border(canvas, tx, ty, tile_w, tile_h, s, selected ? MUZZA_COLOR_ACCENT : MUZZA_COLOR_BORDER);
 
         if (hovered && allow_interaction) {
@@ -169,7 +172,7 @@ void ui_draw_media_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_acti
         const muzza_media* media = &state->project->media_pool[state->media_panel.selected_media_index];
         snprintf(duration_text, sizeof(duration_text), "%.1fs", media->duration);
         ui_draw_text_ellipsis(canvas, x + 14.0f * s, y + h - 57.0f * s, w - 156.0f * s, muzza_path_basename(media->filepath), 2.0f * s, 0xFFD4DDE1);
-        ui_draw_text(canvas, x + 14.0f * s, y + h - 34.0f * s, media->has_video && media->has_audio ? "A/V MEDIA" : (media->has_video ? "VIDEO MEDIA" : "AUDIO MEDIA"), 1.0f * s, media_color(media));
+        ui_draw_text(canvas, x + 14.0f * s, y + h - 34.0f * s, media->is_image ? "IMAGE MEDIA" : (media->has_video && media->has_audio ? "A/V MEDIA" : (media->has_video ? "VIDEO MEDIA" : "AUDIO MEDIA")), 1.0f * s, media_color(media));
         ui_draw_text(canvas, x + 14.0f * s, y + h - 20.0f * s, duration_text, 1.0f * s, 0xFF93A0A8);
 
         ui_draw_rect(canvas, x + w - 118.0f * s, y + h - 50.0f * s, 100.0f * s, 30.0f * s, MUZZA_COLOR_ACCENT);

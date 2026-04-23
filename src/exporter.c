@@ -583,6 +583,9 @@ static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
         export_src_decoder* dec = ensure_src_dec_video(exp, clip->media_id);
 
         if (dec && dec->has_video) {
+            muzza_media* media = project_get_media((muzza_project*)exp->project, clip->media_id);
+            bool is_image = media && media->is_image;
+
             /* Seek only on clip change or large time jump (>0.5s) */
             if (vclip_idx != exp->current_vclip_idx ||
                 fabs(media_time - exp->current_vclip_media_time) > 0.5) {
@@ -595,6 +598,11 @@ static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
             int safety = 0;
             while (safety < 300) {
                 if (!src_dec_read_video(dec, src_frame)) break;
+
+                if (is_image) {
+                    got_frame = true;
+                    break;
+                }
 
                 double pts = 0.0;
                 if (src_frame->pts != AV_NOPTS_VALUE && dec->video_idx >= 0) {

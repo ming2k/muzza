@@ -32,6 +32,7 @@ typedef struct {
     double duration;
     bool has_video;
     bool has_audio;
+    bool is_image;
     muzza_waveform waveform;
 } muzza_media;
 

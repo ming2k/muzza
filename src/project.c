@@ -18,6 +18,7 @@ typedef struct {
     double duration;
     bool has_video;
     bool has_audio;
+    bool is_image;
 } media_parse_state;
 
 typedef struct {
@@ -164,6 +165,7 @@ static bool finalize_media_section(muzza_project* proj, media_parse_state* media
     }
     proj->media_pool[media_id].has_video = media->has_video;
     proj->media_pool[media_id].has_audio = media->has_audio;
+    proj->media_pool[media_id].is_image = media->is_image;
 
     return true;
 }
@@ -331,7 +333,8 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
                 media->duration = decoder_get_duration(media->dec);
             }
 
-            if (media->has_audio && !media->waveform.peaks) {
+            media->is_image = decoder_is_image(media->dec);
+        if (media->has_audio && !media->waveform.peaks) {
                 media->waveform.num_peaks = 1000;
                 media->waveform.peaks = calloc(media->waveform.num_peaks, sizeof(float));
                 if (media->waveform.peaks) {
@@ -523,7 +526,7 @@ double project_get_clip_media_time(const muzza_project* proj, const muzza_clip* 
     }
 
     media = project_get_media((muzza_project*)proj, clip->media_id);
-    if (media && media->duration > 0.0 && local_time > media->duration) {
+    if (media && media->duration > 0.0 && !media->is_image && local_time > media->duration) {
         local_time = media->duration;
     }
 
@@ -572,6 +575,7 @@ bool project_save(muzza_project* proj, const char* filepath) {
         fprintf(file, "duration=%.6f\n", proj->media_pool[i].duration);
         fprintf(file, "has_video=%d\n", proj->media_pool[i].has_video ? 1 : 0);
         fprintf(file, "has_audio=%d\n", proj->media_pool[i].has_audio ? 1 : 0);
+        fprintf(file, "is_image=%d\n", proj->media_pool[i].is_image ? 1 : 0);
     }
 
     for (size_t i = 0; i < proj->num_clips; ++i) {
@@ -680,6 +684,8 @@ muzza_project* project_load(const char* filepath) {
                 media.has_video = atoi(value) != 0;
             } else if (strcmp(key, "has_audio") == 0) {
                 media.has_audio = atoi(value) != 0;
+            } else if (strcmp(key, "is_image") == 0) {
+                media.is_image = atoi(value) != 0;
             }
         } else if (section == SECTION_CLIP && clip.active) {
             if (strcmp(key, "media") == 0) {

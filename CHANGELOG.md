@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.6 - 2026-04-23
+
+Image media support, import browser polish, and flux swapchain stability fixes.
+
+### Added
+
+- **Image Media Support**: Static images (PNG, JPEG, GIF, WebP, BMP, TIFF, and more) can now be imported into the media bin and placed on the timeline.
+- **Image Default Duration**: Images dragged to the timeline automatically receive a 5-second default duration (instead of zero).
+- **Infinite Image Trimming**: Image clips can have their duration extended arbitrarily by dragging the right edge; they are not capped by media duration.
+- **Image Export**: Static images are correctly repeated frame-by-frame for the full clip duration during MP4 export.
+- **Image Visual Identity**: Images appear in the Media Bin with a purple "IMAGE" label and are distinguishable from video/audio assets.
+- **Import Browser Scrollbar**: A visual scroll thumb now appears between the up/down arrows, showing current scroll position relative to the file list.
+- **Import Browser Mouse Wheel**: Hovering over the file list and scrolling the mouse wheel now scrolls the list.
+
+### Changed
+
+- `decoder_is_image()` detects static images via FFmpeg codec ID heuristics (MJPEG, PNG, GIF, WebP, BMP, TIFF, etc.) with a duration-based fallback.
+- `muzza_media` now carries an `is_image` boolean field; this is persisted in `.muzza` project files.
+- Import dialog window now calls `SDL_RaiseWindow` on creation to ensure it receives keyboard focus immediately.
+- Escape key handling is now dialog-priority: if the Import dialog is visible, Escape closes it regardless of which window holds OS focus.
+
+### Fixed
+
+- **Import Browser Cancel Crash**: Clicking Cancel (or the X button) now synchronously destroys the dialog window alongside hiding the browser state, eliminating a one-frame gap where stale window events could route to the main window and cause accidental application quit.
+- **Swapchain Spam**: Fixed excessive `[flux I] swapchain ...` log spam caused by `dialog_window_sync_surface` calling `fx_surface_resize` every frame. `fx_surface_resize` now only marks `needs_recreate` when the requested dimensions actually change.
+
 ## v0.1.5 - 2026-04-23
 
 Independent dialog windows, multi-surface rendering, and improved UI icons.

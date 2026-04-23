@@ -110,11 +110,39 @@ void ui_draw_import_browser(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
         }
     }
 
+    /* Mouse wheel scrolling */
+    if (browser->num_files > visible_rows) {
+        bool hovered_list = ui_point_in_rect(state->input.x, state->input.y, list_x, list_y, list_w, list_h);
+        if (hovered_list && state->input.wheel_y != 0.0f) {
+            int delta = (state->input.wheel_y > 0.0f) ? -1 : 1;
+            browser->scroll += delta;
+            if (browser->scroll < 0) browser->scroll = 0;
+            if (browser->scroll > max_scroll) browser->scroll = max_scroll;
+        }
+    }
+
     if (browser->num_files > visible_rows) {
         float scroll_x = panel_x + panel_w - 32.0f * s;
         float scroll_up_y = list_y + 10.0f * s;
         float scroll_down_y = list_y + list_h - 34.0f * s;
+        float track_y = scroll_up_y + 18.0f * s + 4.0f * s;
+        float track_h = scroll_down_y - track_y - 4.0f * s;
 
+        /* Scroll track */
+        ui_draw_rect(canvas, scroll_x, track_y, 14.0f * s, track_h, MUZZA_COLOR_TRACK_ALT);
+
+        /* Scroll thumb */
+        if (track_h > 10.0f * s) {
+            float thumb_h = track_h * (float)visible_rows / (float)browser->num_files;
+            if (thumb_h < 10.0f * s) thumb_h = 10.0f * s;
+            float thumb_y = track_y;
+            if (max_scroll > 0) {
+                thumb_y += (browser->scroll / (float)max_scroll) * (track_h - thumb_h);
+            }
+            ui_draw_rect(canvas, scroll_x + 2.0f * s, thumb_y, 10.0f * s, thumb_h, MUZZA_COLOR_ACCENT_DIM);
+        }
+
+        /* Up / Down buttons */
         ui_draw_rect(canvas, scroll_x, scroll_up_y, 14.0f * s, 18.0f * s, MUZZA_COLOR_TRACK_ALT);
         draw_icon_arrow_up(canvas, scroll_x + 1.0f * s, scroll_up_y + 2.0f * s, 10.0f * s, 0xFFE7F4F3);
         ui_draw_rect(canvas, scroll_x, scroll_down_y, 14.0f * s, 18.0f * s, MUZZA_COLOR_TRACK_ALT);

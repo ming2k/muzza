@@ -767,3 +767,34 @@ bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_p
 
     return success;
 }
+
+bool decoder_is_image(muzza_decoder* dec) {
+    if (!dec || dec->video_idx < 0) return false;
+    if (dec->audio_idx >= 0) return false;
+    if (!dec->fmt_ctx || !dec->fmt_ctx->streams[dec->video_idx]) return false;
+
+    AVCodecParameters* params = dec->fmt_ctx->streams[dec->video_idx]->codecpar;
+    switch (params->codec_id) {
+        case AV_CODEC_ID_MJPEG:
+        case AV_CODEC_ID_PNG:
+        case AV_CODEC_ID_GIF:
+        case AV_CODEC_ID_WEBP:
+        case AV_CODEC_ID_BMP:
+        case AV_CODEC_ID_TIFF:
+        case AV_CODEC_ID_PPM:
+        case AV_CODEC_ID_PGM:
+        case AV_CODEC_ID_PBM:
+        case AV_CODEC_ID_JPEG2000:
+        case AV_CODEC_ID_JPEGXL:
+            return true;
+        default:
+            break;
+    }
+
+    /* Fallback: no audio and very short duration (likely an image) */
+    if (dec->duration < 0.1) {
+        return true;
+    }
+
+    return false;
+}

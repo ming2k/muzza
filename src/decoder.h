@@ -30,6 +30,8 @@ bool decoder_is_paused(muzza_decoder* dec);
 bool decoder_has_video(muzza_decoder* dec);
 bool decoder_has_audio(muzza_decoder* dec);
 
+bool decoder_is_image(muzza_decoder* dec);
+
 bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_peaks);
 
 #endif
