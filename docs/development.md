@@ -1,5 +1,8 @@
 # Development Guide
 
+## Language Policy
+English is the official language for this project. All source code (variable names, comments), commit messages, and documentation within the `docs/` directory must be written in English to ensure accessibility for the global developer community and compatibility with automated tooling.
+
 ## Requirements
 * Meson 1.x+
 * Ninja
