@@ -81,6 +81,7 @@ muzza_decoder* project_ensure_clip_decoder(muzza_project* proj, int clip_index, 
 int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_type type, double start, double dur, double media_in);
 void project_remove_clip(muzza_project* proj, int index);
 void project_clear_selection(muzza_project* proj);
+int project_split_clip(muzza_project* proj, int clip_index, double split_time);
 int project_find_clip_at_time(const muzza_project* proj, double time_seconds);
 double project_get_clip_media_time(const muzza_project* proj, const muzza_clip* clip, double timeline_time);
 void project_recalculate_duration(muzza_project* proj);

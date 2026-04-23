@@ -73,9 +73,24 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     float tracks_w = w - header_w - 10.0f * s;
     float current_y = y + 38.0f * s;
     int clicked_clip = -1;
+    int trim_hover_clip = -1;
+    int trim_hover_edge = 0;
 
     if (!proj || state->import_browser.visible || state->export_panel.visible) {
         return;
+    }
+
+    // Toolbar hit test (header area, right of TIMELINE label)
+    float toolbar_x = x + 90.0f * s;
+    float toolbar_y = y + 8.0f * s;
+    float btn_w = 34.0f * s;
+    float btn_h = 18.0f * s;
+    if (state->input.left_pressed) {
+        if (ui_point_in_rect(state->input.x, state->input.y, toolbar_x, toolbar_y, btn_w, btn_h)) {
+            timeline->active_tool = MUZZA_TOOL_SELECT;
+        } else if (ui_point_in_rect(state->input.x, state->input.y, toolbar_x + btn_w + 4.0f * s, toolbar_y, btn_w, btn_h)) {
+            timeline->active_tool = MUZZA_TOOL_RAZOR;
+        }
     }
 
     // Handle Zooming and Scrolling
@@ -104,6 +119,47 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     }
     if (timeline->scroll_x < 0.0) timeline->scroll_x = 0.0;
 
+    // Trim drag handling
+    if (timeline->is_trimming && timeline->trim_clip_index >= 0 && state->input.left_down) {
+        muzza_clip* clip = &proj->clips[timeline->trim_clip_index];
+        double mouse_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
+        muzza_media* media = project_get_media(proj, clip->media_id);
+        double media_dur = media ? media->duration : 0.0;
+
+        if (timeline->trim_edge == -1) {
+            // Left trim: adjust tl_start and media_in, keep right edge fixed
+            double old_end = timeline->trim_original_start + timeline->trim_original_duration;
+            double delta = mouse_time - timeline->trim_original_start;
+            double new_start = timeline->trim_original_start + delta;
+            double new_media_in = timeline->trim_original_media_in + delta;
+            double new_dur = old_end - new_start;
+
+            if (new_media_in < 0.0) { new_media_in = 0.0; new_start = timeline->trim_original_start - timeline->trim_original_media_in; new_dur = old_end - new_start; }
+            if (new_dur < 0.1) { new_dur = 0.1; new_start = old_end - 0.1; new_media_in = timeline->trim_original_media_in + (new_start - timeline->trim_original_start); }
+            if (new_media_in + new_dur > media_dur && media_dur > 0.0) {
+                double overflow = (new_media_in + new_dur) - media_dur;
+                new_media_in -= overflow;
+                new_start -= overflow;
+                new_dur = old_end - new_start;
+            }
+            if (new_media_in < 0.0) new_media_in = 0.0;
+            if (new_start < 0.0) { new_start = 0.0; new_dur = old_end; new_media_in = timeline->trim_original_media_in - timeline->trim_original_start; }
+
+            clip->tl_start = new_start;
+            clip->media_in = new_media_in;
+            clip->tl_duration = new_dur;
+        } else if (timeline->trim_edge == 1) {
+            // Right trim: adjust tl_duration, keep left edge fixed
+            double new_dur = mouse_time - timeline->trim_original_start;
+            if (new_dur < 0.1) new_dur = 0.1;
+            if (timeline->trim_original_media_in + new_dur > media_dur && media_dur > 0.0) {
+                new_dur = media_dur - timeline->trim_original_media_in;
+            }
+            clip->tl_duration = new_dur;
+        }
+        project_recalculate_duration(proj);
+    }
+
     for (int track = 0; track < MUZZA_MAX_TRACKS; ++track) {
         float track_h = ui_clampf(proj->track_heights[track] * s, 24.0f * s, h - 50.0f * s);
         float edge_y = current_y + track_h;
@@ -126,8 +182,59 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
             float clip_w = (float)clip->tl_duration * timeline->zoom * s;
             if (clip_w < 4.0f * s) clip_w = 4.0f * s;
 
-            if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, clip_x, current_y + 2.0f * s, clip_w, track_h - 4.0f * s)) {
-                clicked_clip = (int)clip_index;
+            float body_y = current_y + 2.0f * s;
+            float body_h = track_h - 4.0f * s;
+
+            // Check hover for trim handles (SELECT) or clip body (RAZOR)
+            if (timeline->active_tool == MUZZA_TOOL_SELECT && !timeline->is_trimming) {
+                if (ui_point_in_rect(state->input.x, state->input.y, clip_x, body_y, 6.0f * s, body_h)) {
+                    trim_hover_clip = (int)clip_index;
+                    trim_hover_edge = -1;
+                } else if (ui_point_in_rect(state->input.x, state->input.y, clip_x + clip_w - 6.0f * s, body_y, 6.0f * s, body_h)) {
+                    trim_hover_clip = (int)clip_index;
+                    trim_hover_edge = 1;
+                }
+            } else if (timeline->active_tool == MUZZA_TOOL_RAZOR && !timeline->is_trimming) {
+                if (ui_point_in_rect(state->input.x, state->input.y, clip_x, body_y, clip_w, body_h)) {
+                    trim_hover_clip = (int)clip_index;
+                    trim_hover_edge = 0;
+                }
+            }
+
+            // Click detection
+            if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, clip_x, body_y, clip_w, body_h)) {
+                // In SELECT mode, check if clicking on a trim handle
+                if (timeline->active_tool == MUZZA_TOOL_SELECT) {
+                    if (ui_point_in_rect(state->input.x, state->input.y, clip_x, body_y, 6.0f * s, body_h)) {
+                        timeline->is_trimming = true;
+                        timeline->trim_clip_index = (int)clip_index;
+                        timeline->trim_edge = -1;
+                        timeline->trim_start_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
+                        timeline->trim_original_start = clip->tl_start;
+                        timeline->trim_original_duration = clip->tl_duration;
+                        timeline->trim_original_media_in = clip->media_in;
+                        project_clear_selection(proj);
+                        proj->clips[clip_index].selected = true;
+                        timeline->selected_clip_index = (int)clip_index;
+                    } else if (ui_point_in_rect(state->input.x, state->input.y, clip_x + clip_w - 6.0f * s, body_y, 6.0f * s, body_h)) {
+                        timeline->is_trimming = true;
+                        timeline->trim_clip_index = (int)clip_index;
+                        timeline->trim_edge = 1;
+                        timeline->trim_start_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
+                        timeline->trim_original_start = clip->tl_start;
+                        timeline->trim_original_duration = clip->tl_duration;
+                        timeline->trim_original_media_in = clip->media_in;
+                        project_clear_selection(proj);
+                        proj->clips[clip_index].selected = true;
+                        timeline->selected_clip_index = (int)clip_index;
+                    } else {
+                        clicked_clip = (int)clip_index;
+                    }
+                } else if (timeline->active_tool == MUZZA_TOOL_RAZOR && actions) {
+                    // Razor: split clip at click position
+                    actions->split_clip_index = (int)clip_index;
+                    actions->split_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
+                }
             }
         }
 
@@ -137,11 +244,18 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         }
     }
 
+    // Store trim hover for rendering
+    timeline->trim_hover_clip = trim_hover_clip;
+    timeline->trim_hover_edge = trim_hover_edge;
+
     if (state->input.left_released) {
         timeline->is_dragging_track_edge = false;
+        timeline->is_trimming = false;
+        timeline->trim_clip_index = -1;
+        timeline->trim_edge = 0;
     }
 
-    if (clicked_clip >= 0) {
+    if (clicked_clip >= 0 && !timeline->is_trimming) {
         project_clear_selection(proj);
         proj->clips[clicked_clip].selected = true;
         timeline->selected_clip_index = clicked_clip;
@@ -153,7 +267,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         timeline->is_dragging_clip = true;
         timeline->dragged_clip_index = clicked_clip;
         timeline->drag_start_offset = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s) - proj->clips[clicked_clip].tl_start;
-    } else if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, tracks_x, y + 28.0f * s, tracks_w, h - 28.0f * s)) {
+    } else if (state->input.left_pressed && !timeline->is_trimming && ui_point_in_rect(state->input.x, state->input.y, tracks_x, y + 28.0f * s, tracks_w, h - 28.0f * s)) {
         timeline->is_scrubbing = true;
         timeline->playhead_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
         if (timeline->playhead_time < 0.0) timeline->playhead_time = 0.0;
@@ -161,7 +275,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         timeline->selected_clip_index = -1;
     }
 
-    if (state->input.left_down && timeline->is_dragging_clip && timeline->dragged_clip_index >= 0) {
+    if (state->input.left_down && timeline->is_dragging_clip && timeline->dragged_clip_index >= 0 && !timeline->is_trimming) {
         muzza_clip* clip = &proj->clips[timeline->dragged_clip_index];
         double new_tl_start = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s) - timeline->drag_start_offset;
         clip->tl_start = new_tl_start < 0.0 ? 0.0 : new_tl_start;
@@ -177,7 +291,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         project_recalculate_duration(proj);
     }
 
-    if (state->input.left_down && timeline->is_scrubbing) {
+    if (state->input.left_down && timeline->is_scrubbing && !timeline->is_trimming) {
         timeline->playhead_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
         if (timeline->playhead_time < 0.0) timeline->playhead_time = 0.0;
     }
@@ -217,6 +331,21 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
 
     snprintf(time_text, sizeof(time_text), "%.2fs / %.2fs", timeline->playhead_time, proj->duration);
     ui_draw_text(canvas, x + 14.0f * s, y + 12.0f * s, "TIMELINE", 2.0f * s, 0xFFD7DEE3);
+
+    // Toolbar
+    float toolbar_x = x + 90.0f * s;
+    float toolbar_y = y + 8.0f * s;
+    float btn_w = 34.0f * s;
+    float btn_h = 18.0f * s;
+    fx_color sel_color = (timeline->active_tool == MUZZA_TOOL_SELECT) ? MUZZA_COLOR_ACCENT : MUZZA_COLOR_TRACK_ALT;
+    fx_color cut_color = (timeline->active_tool == MUZZA_TOOL_RAZOR) ? MUZZA_COLOR_ACCENT : MUZZA_COLOR_TRACK_ALT;
+    ui_draw_rect(canvas, toolbar_x, toolbar_y, btn_w, btn_h, sel_color);
+    ui_draw_border(canvas, toolbar_x, toolbar_y, btn_w, btn_h, s, MUZZA_COLOR_BORDER);
+    ui_draw_text_centered(canvas, toolbar_x, toolbar_y, btn_w, btn_h, "SEL", 1.0f * s, 0xFFF0F7F6);
+    ui_draw_rect(canvas, toolbar_x + btn_w + 4.0f * s, toolbar_y, btn_w, btn_h, cut_color);
+    ui_draw_border(canvas, toolbar_x + btn_w + 4.0f * s, toolbar_y, btn_w, btn_h, s, MUZZA_COLOR_BORDER);
+    ui_draw_text_centered(canvas, toolbar_x + btn_w + 4.0f * s, toolbar_y, btn_w, btn_h, "CUT", 1.0f * s, 0xFFF0F7F6);
+
     ui_draw_text_right(canvas, x + w - 16.0f * s, y + 12.0f * s, time_text, 2.0f * s, 0xFF8FA0A9);
 
     // Draw background for tracks area
@@ -285,6 +414,30 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
             }
 
             ui_draw_rect(canvas, draw_x, current_y + 2.0f * s, draw_w, track_h - 4.0f * s, color);
+
+            // Draw trim handle highlights
+            if (timeline->active_tool == MUZZA_TOOL_SELECT) {
+                bool hover_left = ((int)clip_index == timeline->trim_hover_clip && timeline->trim_hover_edge == -1);
+                bool hover_right = ((int)clip_index == timeline->trim_hover_clip && timeline->trim_hover_edge == 1);
+                bool trim_left = (timeline->is_trimming && timeline->trim_clip_index == (int)clip_index && timeline->trim_edge == -1);
+                bool trim_right = (timeline->is_trimming && timeline->trim_clip_index == (int)clip_index && timeline->trim_edge == 1);
+                if (hover_left || trim_left) {
+                    ui_draw_rect(canvas, clip_x, current_y + 2.0f * s, 2.0f * s, track_h - 4.0f * s, MUZZA_COLOR_ACCENT);
+                }
+                if (hover_right || trim_right) {
+                    ui_draw_rect(canvas, clip_x + clip_w - 2.0f * s, current_y + 2.0f * s, 2.0f * s, track_h - 4.0f * s, MUZZA_COLOR_ACCENT);
+                }
+            }
+
+            // Draw razor preview line
+            if (timeline->active_tool == MUZZA_TOOL_RAZOR && !timeline->is_trimming) {
+                if ((int)clip_index == timeline->trim_hover_clip) {
+                    float razor_x = state->input.x;
+                    if (razor_x >= clip_x && razor_x <= clip_x + clip_w) {
+                        ui_draw_rect(canvas, razor_x - 1.0f * s, current_y + 2.0f * s, 2.0f * s, track_h - 4.0f * s, MUZZA_COLOR_ALERT);
+                    }
+                }
+            }
             
             // Draw waveform for audio clips
             if (clip->type == MUZZA_CLIP_AUDIO && clip->media_id >= 0 && (size_t)clip->media_id < proj->num_media) {
@@ -369,5 +522,40 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
     if (playhead_x >= tracks_x && playhead_x <= tracks_x + tracks_w) {
         ui_draw_rect(canvas, playhead_x - 1.0f * s, y + 28.0f * s, 2.0f * s, h - 28.0f * s, MUZZA_COLOR_ALERT);
         ui_draw_rect(canvas, playhead_x - 8.0f * s, y + 28.0f * s, 16.0f * s, 10.0f * s, MUZZA_COLOR_ALERT);
+    }
+
+    // Tool cursor indicator (drawn last so it appears on top)
+    if (ui_point_in_rect(state->input.x, state->input.y, x, y, w, h)) {
+        if (timeline->active_tool == MUZZA_TOOL_RAZOR) {
+            float cx = state->input.x;
+            float cy = state->input.y;
+            // Blade (vertical line)
+            ui_draw_rect(canvas, cx - 1.0f * s, cy - 10.0f * s, 2.0f * s, 20.0f * s, MUZZA_COLOR_ALERT);
+            // Blade edge highlight
+            ui_draw_rect(canvas, cx - 2.0f * s, cy - 10.0f * s, 1.0f * s, 20.0f * s, 0xFFFF6666);
+            // Handle top
+            ui_draw_rect(canvas, cx - 5.0f * s, cy - 14.0f * s, 10.0f * s, 5.0f * s, MUZZA_COLOR_ALERT);
+            // Handle bottom
+            ui_draw_rect(canvas, cx - 5.0f * s, cy + 9.0f * s, 10.0f * s, 5.0f * s, MUZZA_COLOR_ALERT);
+            // Crosshair guide lines
+            ui_draw_rect(canvas, cx - 20.0f * s, cy - 0.5f * s, 40.0f * s, 1.0f * s, 0x44FF4444);
+            ui_draw_rect(canvas, cx - 0.5f * s, cy - 20.0f * s, 1.0f * s, 40.0f * s, 0x44FF4444);
+        } else if (timeline->active_tool == MUZZA_TOOL_SELECT && timeline->trim_hover_clip >= 0 && timeline->trim_hover_edge != 0) {
+            float cx = state->input.x;
+            float cy = state->input.y;
+            fx_color indicator_color = MUZZA_COLOR_ACCENT;
+            // Draw small directional arrows at cursor
+            if (timeline->trim_hover_edge < 0) {
+                // Left edge — draw left-pointing arrow
+                ui_draw_rect(canvas, cx - 6.0f * s, cy - 2.0f * s, 8.0f * s, 4.0f * s, indicator_color);
+                ui_draw_rect(canvas, cx - 6.0f * s, cy - 5.0f * s, 4.0f * s, 3.0f * s, indicator_color);
+                ui_draw_rect(canvas, cx - 6.0f * s, cy + 2.0f * s, 4.0f * s, 3.0f * s, indicator_color);
+            } else {
+                // Right edge — draw right-pointing arrow
+                ui_draw_rect(canvas, cx - 2.0f * s, cy - 2.0f * s, 8.0f * s, 4.0f * s, indicator_color);
+                ui_draw_rect(canvas, cx + 2.0f * s, cy - 5.0f * s, 4.0f * s, 3.0f * s, indicator_color);
+                ui_draw_rect(canvas, cx + 2.0f * s, cy + 2.0f * s, 4.0f * s, 3.0f * s, indicator_color);
+            }
+        }
     }
 }

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.4 - 2026-04-23
+
+Timeline editing tools: clip trimming, razor splitting, and custom cursor visuals.
+
+### Added
+
+- **Clip Trimming**: Drag left or right clip edges to adjust in/out points. Trim handles highlight on hover and constrain to media bounds.
+- **Razor Tool**: Click the `CUT` button or press `C` to enter razor mode, then click any clip to split it at the playhead position.
+- **Toolbar**: Timeline header now shows `SEL` and `CUT` buttons for switching between select and razor modes.
+- **Delete Key**: Press `Delete` to remove the currently selected clip from the timeline.
+- **Tool Shortcuts**: `V` switches to Select mode, `C` switches to Razor mode.
+- **Custom Tool Cursors**: Razor mode displays a red blade icon at the cursor; trim hover shows directional arrows since the OS cursor cannot be changed.
+
+### Fixed
+
+- `reset_actions()` now properly initializes `delete_clip_index` and `split_clip_index` to `-1`.
+
 ## v0.1.3 - 2026-04-23
 
 Full export/render pipeline with background-thread encoding, live progress UI, and independent video/audio decoder isolation.

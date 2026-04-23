@@ -37,6 +37,11 @@ typedef struct {
     int dragged_media_index;
 } muzza_media_panel_state;
 
+typedef enum {
+    MUZZA_TOOL_SELECT = 0,
+    MUZZA_TOOL_RAZOR = 1
+} muzza_timeline_tool;
+
 typedef struct {
     bool is_scrubbing;
     bool is_dragging_track_edge;
@@ -50,6 +55,17 @@ typedef struct {
 
     float zoom;      // pixels per second (unscaled by ui_scale)
     double scroll_x; // time offset in seconds
+
+    muzza_timeline_tool active_tool;
+    bool is_trimming;
+    int trim_clip_index;
+    int trim_edge; /* -1 = left, 1 = right */
+    int trim_hover_clip;
+    int trim_hover_edge;
+    double trim_start_time;
+    double trim_original_start;
+    double trim_original_duration;
+    double trim_original_media_in;
 } muzza_timeline_state;
 
 typedef struct {
@@ -110,6 +126,9 @@ typedef struct {
     int insert_track_index;
     double insert_timeline_time;
     char import_path[1024];
+    int delete_clip_index;
+    int split_clip_index;
+    double split_time;
 } muzza_ui_actions;
 
 void ui_state_init(muzza_ui_state* state, muzza_project* project);

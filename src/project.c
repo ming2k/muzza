@@ -415,6 +415,56 @@ void project_remove_clip(muzza_project* proj, int index) {
     project_recalculate_duration(proj);
 }
 
+int project_split_clip(muzza_project* proj, int clip_index, double split_time) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips) return -1;
+
+    muzza_clip* orig = &proj->clips[clip_index];
+    double old_end = orig->tl_start + orig->tl_duration;
+
+    if (split_time <= orig->tl_start + 0.05 || split_time >= old_end - 0.05) return -1;
+
+    double split_offset = split_time - orig->tl_start;
+    double new_media_in = orig->media_in + split_offset;
+
+    // Ensure capacity
+    if (proj->num_clips >= proj->clips_cap) {
+        size_t new_cap = proj->clips_cap < 8 ? 8 : proj->clips_cap * 2;
+        muzza_clip* new_arr = realloc(proj->clips, sizeof(*proj->clips) * new_cap);
+        if (!new_arr) return -1;
+        proj->clips = new_arr;
+        proj->clips_cap = new_cap;
+    }
+
+    // Shift clips after orig to make room
+    for (size_t i = proj->num_clips; i > (size_t)clip_index + 1; --i) {
+        proj->clips[i] = proj->clips[i - 1];
+    }
+
+    // New clip (right side)
+    muzza_clip* new_clip = &proj->clips[clip_index + 1];
+    new_clip->media_id = orig->media_id;
+    new_clip->track_index = orig->track_index;
+    new_clip->type = orig->type;
+    new_clip->tl_start = split_time;
+    new_clip->tl_duration = old_end - split_time;
+    new_clip->media_in = new_media_in;
+    new_clip->opacity = orig->opacity;
+    new_clip->scale = orig->scale;
+    new_clip->pos_x = orig->pos_x;
+    new_clip->pos_y = orig->pos_y;
+    new_clip->filter = orig->filter;
+    new_clip->selected = false;
+    new_clip->dec = NULL;
+
+    // Shorten original (left side)
+    orig->tl_duration = split_time - orig->tl_start;
+    orig->selected = true;
+
+    proj->num_clips++;
+    project_recalculate_duration(proj);
+    return clip_index + 1;
+}
+
 void project_clear_selection(muzza_project* proj) {
     if (!proj) {
         return;

@@ -23,6 +23,8 @@ static void reset_actions(muzza_ui_actions* actions) {
     actions->insert_media_id = -1;
     actions->insert_track_index = -1;
     actions->insert_timeline_time = -1.0;
+    actions->delete_clip_index = -1;
+    actions->split_clip_index = -1;
 }
 
 static void sanitize_state(muzza_ui_state* state) {
@@ -101,6 +103,12 @@ void ui_state_init(muzza_ui_state* state, muzza_project* project) {
     state->timeline.playhead_time = 0.0;
     state->timeline.zoom = 100.0f; // 100 pixels per second default
     state->timeline.scroll_x = 0.0;
+    state->timeline.active_tool = MUZZA_TOOL_SELECT;
+    state->timeline.is_trimming = false;
+    state->timeline.trim_clip_index = -1;
+    state->timeline.trim_edge = 0;
+    state->timeline.trim_hover_clip = -1;
+    state->timeline.trim_hover_edge = 0;
     state->preview.preview_media_index = -1;
     state->playback.clip_index = -1;
     state->playback.media_id = -1;
@@ -166,6 +174,8 @@ void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* 
             case SDLK_LALT: case SDLK_RALT: state->input.alt_down = true; break;
             case SDLK_EQUALS: case SDLK_KP_PLUS: state->input.zoom_in_pressed = true; break;
             case SDLK_MINUS: case SDLK_KP_MINUS: state->input.zoom_out_pressed = true; break;
+            case SDLK_V: state->timeline.active_tool = MUZZA_TOOL_SELECT; break;
+            case SDLK_C: state->timeline.active_tool = MUZZA_TOOL_RAZOR; break;
         }
     } else if (event->type == SDL_EVENT_KEY_UP) {
         switch (event->key.key) {

@@ -382,6 +382,10 @@ int muzza_app_main(int argc, char** argv) {
                     }
                 } else if (event.key.key == SDLK_SPACE && !app.ui.import_browser.visible && !app.ui.export_panel.visible) {
                     app.ui.is_playing = !app.ui.is_playing;
+                } else if (event.key.key == SDLK_DELETE && !app.ui.import_browser.visible && !app.ui.export_panel.visible) {
+                    if (app.ui.timeline.selected_clip_index >= 0) {
+                        actions.delete_clip_index = app.ui.timeline.selected_clip_index;
+                    }
                 }
             }
 
@@ -455,6 +459,20 @@ int muzza_app_main(int argc, char** argv) {
         if (actions.import_path[0] != '\0') {
             if (!import_media_into_project(&app, actions.import_path)) {
                 SDL_Log("Failed to import media: %s", actions.import_path);
+            }
+        }
+        if (actions.delete_clip_index >= 0) {
+            project_remove_clip(app.project, actions.delete_clip_index);
+            app.ui.timeline.selected_clip_index = -1;
+            app.ui.timeline.active_clip_index = -1;
+            playback_reset_session(&app.ui);
+            sanitize_ui_after_project_change(&app);
+        }
+        if (actions.split_clip_index >= 0) {
+            int new_idx = project_split_clip(app.project, actions.split_clip_index, actions.split_time);
+            if (new_idx >= 0) {
+                app.ui.timeline.selected_clip_index = new_idx;
+                playback_reset_session(&app.ui);
             }
         }
         if (actions.open_export_panel) {
