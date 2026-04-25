@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.1.7 - 2026-04-25
+
+Audio-sync correctness pass, multi-format export, per-track metadata, and a Diátaxis docs reorganization.
+
+### Added
+
+- **Multiple Export Formats**: Exporter now supports H.264/AAC MP4 (default), HEVC MP4, VP9/Opus WebM, ProRes MOV, H.264/FLAC MKV, MP3, and WAV. Format selection plus configurable resolution, frame rate, bitrate/CRF, encoder preset, and audio channels are exposed through the export dialog.
+- **Default Output Path Builder**: New output paths embed project name, timestamp, resolution, and an auto-incremented version suffix.
+- **Per-Track Metadata**: `muzza_track` struct carries height, gain, mute, solo, lock, and name fields, replacing the earlier parallel `track_heights[]` array.
+- **Linked AV Groups**: Clips dropped from a media with both video and audio carry a shared `link_group_id` and an explicit `link_role` (video/audio), establishing the foundation for grouped trim and move (see ADR-0006).
+- **Stable Media/Clip UIDs**: `muzza_media` and `muzza_clip` now hold `uint64_t` UIDs that survive array compaction and reordering, used by `.muzza` save/load.
+- **Missing-Media Handling**: Media that can no longer be opened is flagged `missing` rather than silently failing; `project_relink_media` repoints a media entry to a new file path.
+- **Project APIs for Editing**: `project_trim_clip_left`/`_right`, `project_move_clip`, `project_ripple_delete_clip`, `project_split_clip`, `project_clips_would_overlap`, `project_get_media_by_uid`. Timeline coordinate helpers (`time_to_x`, `x_to_time`, `apply_cursor_anchored_zoom`) moved into `project.c` so they can be unit-tested without rendering.
+- **Test Coverage**: New `muzza-exporter-test` suite, plus expanded `muzza-core-test` and `muzza-project-test` coverage of trim/move/ripple/split flows.
+- **LICENSE & CONTRIBUTING**: Apache-2.0 LICENSE file added; CONTRIBUTING.md establishes contribution workflow.
+- **Diátaxis Documentation**: `docs/` reorganized into `tutorials/`, `how-to/`, `reference/`, `explanation/`, `dev/`, and `adr/`. Nine ADRs cover the track-based NLE model, no-same-track-overlap, select-tool move semantics, explicit ripple/overwrite, linked AV defaults, explicit transitions/fades, Linux+Wayland-first packaging, and lavfi-generated test fixtures.
+- **Test Fixtures Script**: `scripts/generate_test_fixtures.sh` deterministically rebuilds AV fixtures via lavfi (see ADR-0009).
+
+### Changed
+
+- **`muzza_waveform` envelope layout**: replaced single `peaks[]` array with `mins[]` and `maxs[]` arrays representing min/max amplitude per bucket. Timeline waveform rendering reads the envelope to produce a more faithful loudness silhouette.
+- **`exporter_create` signature**: now takes a `muzza_export_settings*` describing the requested format and quality.
+- **`ui_icons`**: split inline header into `ui_icons.h` (declarations) plus `ui_icons.c` (definitions and the deferred fx_path cache).
+- **README**: trimmed to a quick-start + documentation pointers, aligned with the new `docs/` layout.
+
+### Fixed
+
+- **Audio Seek Lag**: `decoder_seek_to_time` no longer pushes pre-target audio into the SDL queue during the precise-decode catch-up loop. Previously every seek refilled the queue with audio from the keyframe before the target (often 1–2 seconds early), so playback resumed at the keyframe instead of the requested timestamp. A new `drop_audio_output` flag suppresses queue writes while still letting the codec advance `current_pts`.
+- **Audio Steady-State Stutter**: Drift detection in `playback_controller` now uses `decoder_get_audio_play_time()` (decoded PTS minus the duration still queued in the SDL stream) instead of the lookahead PTS. The previous comparison treated the ~250 ms lookahead as drift and triggered a re-seek every UI frame; once the seek loop stopped refilling the queue with stale audio, that churn surfaced as continuous stutter.
+- **Audio Catch-Up After Seek**: `decoder_update_to_time` no longer early-returns when the decoded PTS has reached the target. The loop's existing break condition already requires both PTS and queue-depth, so the early return left the SDL queue empty after every seek.
+- **Audio Waveform Invisible**: `decoder_generate_waveform` now buckets each sample individually instead of dropping a whole 1024-sample frame into a single bucket; previously ~90% of buckets stayed at zero and the timeline rendered no envelope.
+- **Waveform Render Robustness**: timeline waveform draw switched from envelope polygon fill (which the ear-clipping tessellator silently dropped on degenerate "comb" shapes) to per-pixel column rectangles, so silent stretches no longer cause the entire waveform to disappear.
+
 ## v0.1.6 - 2026-04-23
 
 Image media support, import browser polish, and flux swapchain stability fixes.
