@@ -47,6 +47,7 @@ void import_browser_close(muzza_import_browser_state* state) {
     state->visible = false;
     state->selected_index = -1;
     state->scroll = 0;
+    state->is_dragging_scroll = false;
 }
 
 void import_browser_refresh(muzza_import_browser_state* state) {

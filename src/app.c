@@ -10,11 +10,13 @@
 
 #include "exporter.h"
 #include "flux/flux.h"
+#include "flux/flux_vulkan.h"
 #include "import_browser.h"
 #include "path_utils.h"
 #include "playback_controller.h"
 #include "project.h"
 #include "ui.h"
+# include "ui_icons.h"
 #include "ui_export_panel.h"
 #include "ui_import_browser_panel.h"
 
@@ -186,15 +188,20 @@ static bool insert_media_into_timeline(muzza_app* app, int media_id, double star
     project_clear_selection(app->project);
 
     if (media->has_video && media->has_audio) {
+        uint64_t link_group = app->project->next_link_group_id++;
         clip_index = project_add_clip(app->project, media_id, track, MUZZA_CLIP_VIDEO, start_time, duration, 0.0);
         if (clip_index >= 0) {
             app->project->clips[clip_index].selected = true;
+            app->project->clips[clip_index].link_group_id = link_group;
+            app->project->clips[clip_index].link_role = MUZZA_LINK_VIDEO;
         }
 
         int audio_track = (track + 1) < MUZZA_MAX_TRACKS ? (track + 1) : track;
         int audio_clip_index = project_add_clip(app->project, media_id, audio_track, MUZZA_CLIP_AUDIO, start_time, duration, 0.0);
         if (audio_clip_index >= 0) {
             app->project->clips[audio_clip_index].selected = true;
+            app->project->clips[audio_clip_index].link_group_id = link_group;
+            app->project->clips[audio_clip_index].link_role = MUZZA_LINK_AUDIO;
             if (clip_index < 0) clip_index = audio_clip_index;
         }
     } else if (media->has_video) {
@@ -256,13 +263,22 @@ static muzza_project* create_project_from_args(fx_context* ctx, int argc, char**
     return proj;
 }
 
-static void build_default_export_path(muzza_app* app, char* out, size_t out_size) {
-    const char* base = app->project && app->project->filepath[0] ? app->project->filepath : "untitled";
-    char stem[512] = {0};
-    snprintf(stem, sizeof(stem), "%s", base);
-    char* dot = strrchr(stem, '.');
-    if (dot) *dot = '\0';
-    snprintf(out, out_size, "%s_exported.mp4", stem);
+static void build_default_export_settings(muzza_export_settings* settings, muzza_app* app) {
+    (void)app;
+    if (!settings) return;
+    memset(settings, 0, sizeof(*settings));
+    settings->width = 1920;
+    settings->height = 1080;
+    settings->fps = 30.0;
+    settings->audio_sample_rate = 48000;
+    settings->audio_channels = 2;
+    settings->include_video = true;
+    settings->include_audio = true;
+    settings->format = MUZZA_FORMAT_MP4_H264;
+    settings->video_bitrate = 0;  /* CRF mode */
+    settings->crf = 23;
+    settings->audio_bitrate = 128;
+    settings->preset = 4;         /* medium */
 }
 
 static SDL_HitTestResult dialog_hit_test(SDL_Window* window, const SDL_Point* area, void* data) {
@@ -315,6 +331,8 @@ static bool dialog_window_create(muzza_app* app, muzza_dialog_window* dlg, const
         SDL_Log("Warning: SDL_SetWindowHitTest failed for dialog");
     }
 
+    SDL_SetWindowParent(dlg->window, app->window);
+    SDL_SetWindowModal(dlg->window, true);
     SDL_RaiseWindow(dlg->window);
     return true;
 }
@@ -458,21 +476,35 @@ int muzza_app_main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
+            } else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                if (event.window.windowID == import_id) {
+                    import_browser_close(&app.ui.import_browser);
+                    dialog_window_destroy(&app, &app.import_dlg);
+                } else if (event.window.windowID == export_id) {
+                    if (app.ui.export_panel.is_exporting) {
+                        app.ui.export_panel.cancel_requested = true;
+                    } else {
+                        app.ui.export_panel.visible = false;
+                        dialog_window_destroy(&app, &app.export_dlg);
+                    }
+                } else if (event.window.windowID == main_id) {
+                    running = false;
+                }
             } else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                 if (event.window.windowID == main_id) {
                     fx_surface_resize(app.surface, event.window.data1, event.window.data2);
                 }
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
                 if (event.key.key == SDLK_ESCAPE) {
-                    if (app.ui.import_browser.visible) {
-                        import_browser_close(&app.ui.import_browser);
-                        dialog_window_destroy(&app, &app.import_dlg);
-                    } else if (event.window.windowID == export_id) {
+                    if (app.ui.export_panel.visible) {
                         if (app.ui.export_panel.is_exporting) {
                             app.ui.export_panel.cancel_requested = true;
                         } else {
                             app.ui.export_panel.visible = false;
                         }
+                    } else if (app.ui.import_browser.visible) {
+                        import_browser_close(&app.ui.import_browser);
+                        dialog_window_destroy(&app, &app.import_dlg);
                     } else if (event.window.windowID == main_id) {
                         running = false;
                     }
@@ -486,11 +518,11 @@ int muzza_app_main(int argc, char** argv) {
             }
 
             if (event.window.windowID == export_id) {
-                ui_handle_event(&app.ui, &event, app.export_dlg.window);
+                ui_handle_event(&app.ui, &app.ui.dialog_input, &event, app.export_dlg.window);
             } else if (event.window.windowID == import_id) {
-                ui_handle_event(&app.ui, &event, app.import_dlg.window);
+                ui_handle_event(&app.ui, &app.ui.dialog_input, &event, app.import_dlg.window);
             } else {
-                ui_handle_event(&app.ui, &event, app.window);
+                ui_handle_event(&app.ui, &app.ui.input, &event, app.window);
             }
         }
 
@@ -544,6 +576,7 @@ int muzza_app_main(int argc, char** argv) {
             SDL_GetWindowSizeInPixels(app.window, &app.ui.window_width, &app.ui.window_height);
             ui_render(canvas, &app.ui, &actions);
             fx_surface_present(app.surface);
+            icon_path_flush();
         }
 
         /* Render export dialog */
@@ -555,12 +588,16 @@ int muzza_app_main(int argc, char** argv) {
             fx_canvas* export_canvas = fx_surface_acquire(app.export_dlg.surface);
             if (export_canvas) {
                 float saved_scale = app.ui.ui_scale;
+                muzza_input_state saved_input = app.ui.input;
                 app.ui.ui_scale = dlg_scale;
+                app.ui.input = app.ui.dialog_input;
                 int w = 0, h = 0;
                 SDL_GetWindowSizeInPixels(app.export_dlg.window, &w, &h);
                 ui_draw_export_panel(export_canvas, &app.ui, &actions, w, h);
                 fx_surface_present(app.export_dlg.surface);
+                icon_path_flush();
                 app.ui.ui_scale = saved_scale;
+                app.ui.input = saved_input;
             }
         }
 
@@ -573,12 +610,16 @@ int muzza_app_main(int argc, char** argv) {
             fx_canvas* import_canvas = fx_surface_acquire(app.import_dlg.surface);
             if (import_canvas) {
                 float saved_scale = app.ui.ui_scale;
+                muzza_input_state saved_input = app.ui.input;
                 app.ui.ui_scale = dlg_scale;
+                app.ui.input = app.ui.dialog_input;
                 int w = 0, h = 0;
                 SDL_GetWindowSizeInPixels(app.import_dlg.window, &w, &h);
                 ui_draw_import_browser(import_canvas, &app.ui, &actions, w, h);
                 fx_surface_present(app.import_dlg.surface);
+                icon_path_flush();
                 app.ui.ui_scale = saved_scale;
+                app.ui.input = saved_input;
             }
         }
 
@@ -630,14 +671,18 @@ int muzza_app_main(int argc, char** argv) {
             app.ui.export_panel.progress = 0.0f;
             app.ui.export_panel.status = 0;
             app.ui.export_panel.show_progress = false;
-            build_default_export_path(&app, app.ui.export_panel.output_path,
-                sizeof(app.ui.export_panel.output_path));
-            dialog_window_create(&app, &app.export_dlg, "Export", 640, 320);
+            if (!app.ui.export_panel.settings_initialized) {
+                build_default_export_settings(&app.ui.export_panel.settings, &app);
+            }
+            exporter_build_default_path(app.project, &app.ui.export_panel.settings,
+                app.ui.export_panel.output_path, sizeof(app.ui.export_panel.output_path));
+            dialog_window_create(&app, &app.export_dlg, "Export", 720, 480);
         }
         if (actions.start_export) {
             if (!app.exporter && app.project && app.project->duration > 0.0) {
                 cleanup_export(&app);
-                app.exporter = exporter_create(app.project, app.ui.export_panel.output_path);
+                app.exporter = exporter_create(app.project, app.ui.export_panel.output_path,
+                    &app.ui.export_panel.settings);
                 if (app.exporter) {
                     app.export_thread = exporter_start_thread(app.exporter);
                     if (app.export_thread) {

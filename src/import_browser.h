@@ -23,6 +23,7 @@ typedef struct {
     bool is_dragging;
     float drag_offset_x;
     float drag_offset_y;
+    bool is_dragging_scroll;
 } muzza_import_browser_state;
 
 void import_browser_init(muzza_import_browser_state* state);

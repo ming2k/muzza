@@ -7,6 +7,7 @@
 
 #include "flux/flux.h"
 #include "import_browser.h"
+#include "exporter.h"
 #include "project.h"
 
 typedef struct {
@@ -98,6 +99,9 @@ typedef struct {
     bool is_dragging;
     float drag_offset_x;
     float drag_offset_y;
+    muzza_export_settings settings;
+    bool settings_initialized;
+    int open_dropdown; /* -1 = none, 0..N = dropdown id */
 } muzza_export_panel_state;
 
 typedef struct {
@@ -118,6 +122,7 @@ typedef struct {
     muzza_preview_state preview;
     muzza_playback_session_state playback;
     muzza_export_panel_state export_panel;
+    muzza_input_state dialog_input;  /* Independent input for export/import dialogs */
 } muzza_ui_state;
 
 typedef struct {
@@ -138,7 +143,7 @@ typedef struct {
 
 void ui_state_init(muzza_ui_state* state, muzza_project* project);
 void ui_begin_frame(muzza_ui_state* state);
-void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* window);
+void ui_handle_event(muzza_ui_state* state, muzza_input_state* target_input, const SDL_Event* event, SDL_Window* window);
 void ui_render(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actions);
 
 #endif

@@ -1,9 +1,29 @@
 #include "project.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+float time_to_x(double time, float tracks_x, double scroll_x, float zoom, float s) {
+    return tracks_x + (float)(time - scroll_x) * zoom * s;
+}
+
+double x_to_time(float x_coord, float tracks_x, double scroll_x, float zoom, float s) {
+    return (double)((x_coord - tracks_x) / (zoom * s)) + scroll_x;
+}
+
+void apply_cursor_anchored_zoom(double* scroll_x, float* zoom, float tracks_x, float cursor_x, float zoom_factor, float s) {
+    if (!scroll_x || !zoom) return;
+    double mouse_time_before = x_to_time(cursor_x, tracks_x, *scroll_x, *zoom, s);
+    *zoom *= zoom_factor;
+    if (*zoom < 1.0f) *zoom = 1.0f;
+    if (*zoom > 10000.0f) *zoom = 10000.0f;
+    double mouse_time_after = x_to_time(cursor_x, tracks_x, *scroll_x, *zoom, s);
+    *scroll_x += (mouse_time_before - mouse_time_after);
+    if (*scroll_x < 0.0) *scroll_x = 0.0;
+}
 
 typedef enum {
     SECTION_NONE = 0,
@@ -14,15 +34,18 @@ typedef enum {
 
 typedef struct {
     bool active;
+    uint64_t uid;
     char filepath[512];
     double duration;
     bool has_video;
     bool has_audio;
     bool is_image;
+    bool missing;
 } media_parse_state;
 
 typedef struct {
     bool active;
+    uint64_t uid;
     int media_id;
     int track_index;
     muzza_clip_type type;
@@ -35,6 +58,8 @@ typedef struct {
     float pos_y;
     muzza_filter_type filter;
     bool selected;
+    uint64_t link_group_id;
+    muzza_link_role link_role;
 } clip_parse_state;
 
 static void copy_string(char* dst, size_t dst_size, const char* src) {
@@ -160,12 +185,20 @@ static bool finalize_media_section(muzza_project* proj, media_parse_state* media
         return false;
     }
 
+    if (media->uid > 0) {
+        proj->media_pool[media_id].uid = media->uid;
+        if (media->uid >= proj->next_media_uid) {
+            proj->next_media_uid = media->uid + 1;
+        }
+    }
+
     if (media->duration > 0.0) {
         proj->media_pool[media_id].duration = media->duration;
     }
     proj->media_pool[media_id].has_video = media->has_video;
     proj->media_pool[media_id].has_audio = media->has_audio;
     proj->media_pool[media_id].is_image = media->is_image;
+    proj->media_pool[media_id].missing = media->missing;
 
     return true;
 }
@@ -178,7 +211,10 @@ static bool finalize_clip_section(muzza_project* proj, clip_parse_state* clip) {
     }
 
     clip->active = false;
-    if (clip->media_id < 0 || clip->tl_duration <= 0.0) {
+    if (clip->media_id < 0 || clip->media_id >= (int)proj->num_media || clip->tl_duration <= 0.0) {
+        return false;
+    }
+    if (clip->track_index < 0 || clip->track_index >= MUZZA_MAX_TRACKS) {
         return false;
     }
 
@@ -195,12 +231,21 @@ static bool finalize_clip_section(muzza_project* proj, clip_parse_state* clip) {
         return false;
     }
 
+    if (clip->uid > 0) {
+        proj->clips[clip_index].uid = clip->uid;
+        if (clip->uid >= proj->next_clip_uid) {
+            proj->next_clip_uid = clip->uid + 1;
+        }
+    }
+
     proj->clips[clip_index].opacity = clip->opacity;
     proj->clips[clip_index].scale = clip->scale;
     proj->clips[clip_index].pos_x = clip->pos_x;
     proj->clips[clip_index].pos_y = clip->pos_y;
     proj->clips[clip_index].filter = clip->filter;
     proj->clips[clip_index].selected = clip->selected;
+    proj->clips[clip_index].link_group_id = clip->link_group_id;
+    proj->clips[clip_index].link_role = clip->link_role;
     return true;
 }
 
@@ -212,8 +257,17 @@ muzza_project* project_create(void) {
     }
 
     proj->duration = MUZZA_DEFAULT_DURATION;
+    proj->dirty = false;
+    proj->next_media_uid = 1;
+    proj->next_clip_uid = 1;
+    proj->next_link_group_id = 1;
     for (int i = 0; i < MUZZA_MAX_TRACKS; ++i) {
-        proj->track_heights[i] = MUZZA_DEFAULT_TRACK_HEIGHT;
+        proj->tracks[i].height = MUZZA_DEFAULT_TRACK_HEIGHT;
+        proj->tracks[i].gain = 1.0f;
+        proj->tracks[i].muted = false;
+        proj->tracks[i].solo = false;
+        proj->tracks[i].locked = false;
+        snprintf(proj->tracks[i].name, sizeof(proj->tracks[i].name), "TRACK %d", i + 1);
     }
 
     return proj;
@@ -228,8 +282,11 @@ void project_destroy(muzza_project* proj) {
         if (proj->media_pool[i].dec) {
             decoder_destroy(proj->media_pool[i].dec);
         }
-        if (proj->media_pool[i].waveform.peaks) {
-            free(proj->media_pool[i].waveform.peaks);
+        if (proj->media_pool[i].waveform.mins) {
+            free(proj->media_pool[i].waveform.mins);
+        }
+        if (proj->media_pool[i].waveform.maxs) {
+            free(proj->media_pool[i].waveform.maxs);
         }
     }
 
@@ -264,8 +321,10 @@ int project_add_media(muzza_project* proj, const char* filepath) {
     media = &proj->media_pool[proj->num_media];
     memset(media, 0, sizeof(*media));
     media->id = (int)proj->num_media;
+    media->uid = proj->next_media_uid++;
     copy_string(media->filepath, sizeof(media->filepath), filepath);
     proj->num_media++;
+    proj->dirty = true;
     return media->id;
 }
 
@@ -304,6 +363,7 @@ void project_remove_media(muzza_project* proj, int id) {
     }
 
     proj->num_media--;
+    proj->dirty = true;
     for (size_t i = media_index; i < proj->num_media; ++i) {
         proj->media_pool[i].id = (int)i;
     }
@@ -317,6 +377,50 @@ muzza_media* project_get_media(muzza_project* proj, int id) {
     return &proj->media_pool[id];
 }
 
+bool project_relink_media(muzza_project* proj, int media_id, const char* new_filepath) {
+    muzza_media* media = NULL;
+    if (!proj || !new_filepath || new_filepath[0] == '\0') {
+        return false;
+    }
+    media = project_get_media(proj, media_id);
+    if (!media) {
+        return false;
+    }
+    copy_string(media->filepath, sizeof(media->filepath), new_filepath);
+    if (media->dec) {
+        decoder_destroy(media->dec);
+        media->dec = NULL;
+    }
+    media->missing = false;
+    media->duration = 0.0;
+    media->has_video = false;
+    media->has_audio = false;
+    media->is_image = false;
+    if (media->waveform.mins) {
+        free(media->waveform.mins);
+        media->waveform.mins = NULL;
+    }
+    if (media->waveform.maxs) {
+        free(media->waveform.maxs);
+        media->waveform.maxs = NULL;
+    }
+    media->waveform.num_peaks = 0;
+    proj->dirty = true;
+    return true;
+}
+
+muzza_media* project_get_media_by_uid(muzza_project* proj, uint64_t uid) {
+    if (!proj || uid == 0) {
+        return NULL;
+    }
+    for (size_t i = 0; i < proj->num_media; ++i) {
+        if (proj->media_pool[i].uid == uid) {
+            return &proj->media_pool[i];
+        }
+    }
+    return NULL;
+}
+
 muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_context* ctx) {
     muzza_media* media = project_get_media(proj, id);
 
@@ -327,6 +431,7 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
     if (!media->dec) {
         media->dec = decoder_create(ctx, media->filepath, MUZZA_DECODER_BOTH);
         if (media->dec) {
+            media->missing = false;
             media->has_video = decoder_has_video(media->dec);
             media->has_audio = decoder_has_audio(media->dec);
             if (media->duration <= 0.0) {
@@ -334,12 +439,27 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
             }
 
             media->is_image = decoder_is_image(media->dec);
-        if (media->has_audio && !media->waveform.peaks) {
-                media->waveform.num_peaks = 1000;
-                media->waveform.peaks = calloc(media->waveform.num_peaks, sizeof(float));
-                if (media->waveform.peaks) {
-                    decoder_generate_waveform(media->filepath, media->waveform.peaks, media->waveform.num_peaks);
-                }
+        } else {
+            media->missing = true;
+        }
+    }
+
+    if (media->dec && media->has_audio && !media->waveform.mins && media->duration > 0.0) {
+        /* Dynamic resolution: ~5ms per bucket, clamped to sensible range */
+        int num_peaks = (int)(media->duration * 200.0);
+        if (num_peaks < 2048) num_peaks = 2048;
+        if (num_peaks > 16384) num_peaks = 16384;
+        media->waveform.num_peaks = num_peaks;
+        media->waveform.mins = calloc((size_t)num_peaks, sizeof(float));
+        media->waveform.maxs = calloc((size_t)num_peaks, sizeof(float));
+        if (media->waveform.mins && media->waveform.maxs) {
+            bool ok = decoder_generate_waveform(media->filepath, media->waveform.mins, media->waveform.maxs, num_peaks, media->duration);
+            if (!ok) {
+                free(media->waveform.mins);
+                free(media->waveform.maxs);
+                media->waveform.mins = NULL;
+                media->waveform.maxs = NULL;
+                media->waveform.num_peaks = 0;
             }
         }
     }
@@ -348,18 +468,29 @@ muzza_decoder* project_ensure_media_decoder(muzza_project* proj, int id, fx_cont
 }
 
 muzza_decoder* project_ensure_clip_decoder(muzza_project* proj, int clip_index, fx_context* ctx) {
+    muzza_media* media = NULL;
+
     if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips || !ctx) {
         return NULL;
     }
-    
+
     muzza_clip* clip = &proj->clips[clip_index];
     if (!clip->dec) {
-        muzza_media* media = project_get_media(proj, clip->media_id);
+        media = project_get_media(proj, clip->media_id);
         if (media) {
             muzza_decoder_mode mode = (clip->type == MUZZA_CLIP_VIDEO) ? MUZZA_DECODER_VIDEO : MUZZA_DECODER_AUDIO;
             clip->dec = decoder_create(ctx, media->filepath, mode);
         }
     }
+
+    /* Ensure waveform is generated for audio clips when needed */
+    if (clip->type == MUZZA_CLIP_AUDIO) {
+        media = project_get_media(proj, clip->media_id);
+        if (media && media->has_audio && !media->waveform.mins) {
+            project_ensure_media_decoder(proj, clip->media_id, ctx);
+        }
+    }
+
     return clip->dec;
 }
 
@@ -374,6 +505,10 @@ int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_ty
         return -1;
     }
 
+    if (project_clips_would_overlap(proj, -1, track, start, dur)) {
+        return -1;
+    }
+
     if (!ensure_clip_capacity(proj, proj->num_clips + 1)) {
         return -1;
     }
@@ -381,6 +516,7 @@ int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_ty
     clip = &proj->clips[proj->num_clips];
     memset(clip, 0, sizeof(*clip));
     clip->media_id = media_id;
+    clip->uid = proj->next_clip_uid++;
     clip->track_index = track;
     clip->type = type;
     clip->tl_start = start < 0.0 ? 0.0 : start;
@@ -389,8 +525,11 @@ int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_ty
     clip->opacity = 1.0f;
     clip->scale = 1.0f;
     clip->filter = MUZZA_FILTER_NONE;
+    clip->link_group_id = 0;
+    clip->link_role = MUZZA_LINK_NONE;
 
     proj->num_clips++;
+    proj->dirty = true;
     project_recalculate_duration(proj);
     return (int)(proj->num_clips - 1);
 }
@@ -415,6 +554,7 @@ void project_remove_clip(muzza_project* proj, int index) {
     }
 
     proj->num_clips--;
+    proj->dirty = true;
     project_recalculate_duration(proj);
 }
 
@@ -464,6 +604,7 @@ int project_split_clip(muzza_project* proj, int clip_index, double split_time) {
     orig->selected = true;
 
     proj->num_clips++;
+    proj->dirty = true;
     project_recalculate_duration(proj);
     return clip_index + 1;
 }
@@ -476,6 +617,38 @@ void project_clear_selection(muzza_project* proj) {
     for (size_t i = 0; i < proj->num_clips; ++i) {
         proj->clips[i].selected = false;
     }
+}
+
+int project_find_top_video_clip(const muzza_project* proj, double time_seconds) {
+    int found = -1;
+    int highest_track = -1;
+    if (!proj) return -1;
+    for (size_t i = 0; i < proj->num_clips; ++i) {
+        const muzza_clip* clip = &proj->clips[i];
+        if (clip->type != MUZZA_CLIP_VIDEO) continue;
+        double clip_end = clip->tl_start + clip->tl_duration;
+        if (time_seconds >= clip->tl_start && time_seconds < clip_end) {
+            if (clip->track_index >= highest_track) {
+                highest_track = clip->track_index;
+                found = (int)i;
+            }
+        }
+    }
+    return found;
+}
+
+int project_find_active_audio_clips(const muzza_project* proj, double time_seconds, int* out_indices, int max_indices) {
+    int count = 0;
+    if (!proj || !out_indices || max_indices <= 0) return 0;
+    for (size_t i = 0; i < proj->num_clips && count < max_indices; ++i) {
+        const muzza_clip* clip = &proj->clips[i];
+        if (clip->type != MUZZA_CLIP_AUDIO) continue;
+        double clip_end = clip->tl_start + clip->tl_duration;
+        if (time_seconds >= clip->tl_start && time_seconds < clip_end) {
+            out_indices[count++] = (int)i;
+        }
+    }
+    return count;
 }
 
 int project_find_clip_at_time(const muzza_project* proj, double time_seconds) {
@@ -550,6 +723,150 @@ void project_recalculate_duration(muzza_project* proj) {
     proj->duration = duration;
 }
 
+bool project_trim_clip_left(muzza_project* proj, int clip_index, double new_start, double* out_new_media_in, double* out_new_duration) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips || !out_new_media_in || !out_new_duration) {
+        return false;
+    }
+
+    muzza_clip* clip = &proj->clips[clip_index];
+    muzza_media* media = project_get_media(proj, clip->media_id);
+    double media_dur = media ? media->duration : 0.0;
+    double old_end = clip->tl_start + clip->tl_duration;
+    double delta = new_start - clip->tl_start;
+    double resolved_start = new_start;
+    double resolved_media_in = clip->media_in + delta;
+    double resolved_dur = old_end - resolved_start;
+
+    // Clamp to media bounds for non-image media
+    if (resolved_media_in < 0.0) {
+        resolved_media_in = 0.0;
+        resolved_start = clip->tl_start - clip->media_in;
+        resolved_dur = old_end - resolved_start;
+    }
+    if (resolved_dur < 0.1) {
+        resolved_dur = 0.1;
+        resolved_start = old_end - 0.1;
+        resolved_media_in = clip->media_in + (resolved_start - clip->tl_start);
+    }
+    if (media_dur > 0.0 && !(media && media->is_image)) {
+        if (resolved_media_in + resolved_dur > media_dur) {
+            double overflow = (resolved_media_in + resolved_dur) - media_dur;
+            resolved_media_in -= overflow;
+            resolved_start -= overflow;
+            resolved_dur = old_end - resolved_start;
+        }
+    }
+    if (resolved_media_in < 0.0) resolved_media_in = 0.0;
+    if (resolved_start < 0.0) {
+        resolved_start = 0.0;
+        resolved_dur = old_end;
+        resolved_media_in = clip->media_in - clip->tl_start;
+        if (resolved_media_in < 0.0) resolved_media_in = 0.0;
+    }
+
+    clip->tl_start = resolved_start;
+    clip->media_in = resolved_media_in;
+    clip->tl_duration = resolved_dur;
+    *out_new_media_in = resolved_media_in;
+    *out_new_duration = resolved_dur;
+    project_recalculate_duration(proj);
+    return true;
+}
+
+bool project_trim_clip_right(muzza_project* proj, int clip_index, double new_duration) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips) {
+        return false;
+    }
+
+    muzza_clip* clip = &proj->clips[clip_index];
+    muzza_media* media = project_get_media(proj, clip->media_id);
+    double media_dur = media ? media->duration : 0.0;
+    double resolved_dur = new_duration;
+
+    if (resolved_dur < 0.1) resolved_dur = 0.1;
+    if (media_dur > 0.0 && !(media && media->is_image)) {
+        if (clip->media_in + resolved_dur > media_dur) {
+            resolved_dur = media_dur - clip->media_in;
+            if (resolved_dur < 0.1) resolved_dur = 0.1;
+        }
+    }
+
+    clip->tl_duration = resolved_dur;
+    proj->dirty = true;
+    project_recalculate_duration(proj);
+    return true;
+}
+
+bool project_clips_would_overlap(const muzza_project* proj, int exclude_clip_index, int track_index, double start, double duration) {
+    if (!proj || track_index < 0 || track_index >= MUZZA_MAX_TRACKS || duration <= 0.0) {
+        return false;
+    }
+    double new_end = start + duration;
+    for (size_t i = 0; i < proj->num_clips; ++i) {
+        if ((int)i == exclude_clip_index) continue;
+        const muzza_clip* clip = &proj->clips[i];
+        if (clip->track_index != track_index) continue;
+        double clip_end = clip->tl_start + clip->tl_duration;
+        if (!(new_end <= clip->tl_start || start >= clip_end)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void project_ripple_delete_clip(muzza_project* proj, int clip_index) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips) {
+        return;
+    }
+
+    muzza_clip target = proj->clips[clip_index];
+    double gap_start = target.tl_start;
+    double gap_dur = target.tl_duration;
+    int track = target.track_index;
+    uint64_t link_group = target.link_group_id;
+
+    project_remove_clip(proj, clip_index);
+
+    double gap_end = gap_start + gap_dur;
+    for (size_t i = 0; i < proj->num_clips; ++i) {
+        muzza_clip* clip = &proj->clips[i];
+        if (clip->track_index == track && clip->tl_start >= gap_start) {
+            clip->tl_start -= gap_dur;
+            if (clip->tl_start < 0.0) clip->tl_start = 0.0;
+        }
+        if (link_group > 0 && clip->link_group_id == link_group && clip->track_index != track && clip->tl_start >= gap_start) {
+            clip->tl_start -= gap_dur;
+            if (clip->tl_start < 0.0) clip->tl_start = 0.0;
+        }
+    }
+
+    proj->dirty = true;
+    project_recalculate_duration(proj);
+}
+
+muzza_move_result project_move_clip(muzza_project* proj, int clip_index, double new_start, int new_track) {
+    if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips) {
+        return MUZZA_MOVE_REJECTED;
+    }
+
+    muzza_clip* clip = &proj->clips[clip_index];
+    if (new_track < 0 || new_track >= MUZZA_MAX_TRACKS) {
+        return MUZZA_MOVE_REJECTED;
+    }
+    if (new_start < 0.0) {
+        new_start = 0.0;
+    }
+
+    if (project_clips_would_overlap(proj, clip_index, new_track, new_start, clip->tl_duration)) {
+        return MUZZA_MOVE_REJECTED;
+    }
+
+    clip->tl_start = new_start;
+    clip->track_index = new_track;
+    project_recalculate_duration(proj);
+    return MUZZA_MOVE_OK;
+}
+
 bool project_save(muzza_project* proj, const char* filepath) {
     FILE* file = NULL;
 
@@ -565,22 +882,32 @@ bool project_save(muzza_project* proj, const char* filepath) {
     fprintf(file, "[Project]\n");
     fprintf(file, "version=1\n");
     fprintf(file, "duration=%.6f\n", proj->duration);
+    fprintf(file, "next_media_uid=%llu\n", (unsigned long long)proj->next_media_uid);
+    fprintf(file, "next_clip_uid=%llu\n", (unsigned long long)proj->next_clip_uid);
     for (int i = 0; i < MUZZA_MAX_TRACKS; ++i) {
-        fprintf(file, "track_height_%d=%.2f\n", i, proj->track_heights[i]);
+        fprintf(file, "track_height_%d=%.2f\n", i, proj->tracks[i].height);
+        fprintf(file, "track_gain_%d=%.2f\n", i, proj->tracks[i].gain);
+        fprintf(file, "track_muted_%d=%d\n", i, proj->tracks[i].muted ? 1 : 0);
+        fprintf(file, "track_solo_%d=%d\n", i, proj->tracks[i].solo ? 1 : 0);
+        fprintf(file, "track_locked_%d=%d\n", i, proj->tracks[i].locked ? 1 : 0);
+        fprintf(file, "track_name_%d=%s\n", i, proj->tracks[i].name);
     }
 
     for (size_t i = 0; i < proj->num_media; ++i) {
         fprintf(file, "\n[Media %zu]\n", i);
+        fprintf(file, "uid=%llu\n", (unsigned long long)proj->media_pool[i].uid);
         fprintf(file, "path=%s\n", proj->media_pool[i].filepath);
         fprintf(file, "duration=%.6f\n", proj->media_pool[i].duration);
         fprintf(file, "has_video=%d\n", proj->media_pool[i].has_video ? 1 : 0);
         fprintf(file, "has_audio=%d\n", proj->media_pool[i].has_audio ? 1 : 0);
         fprintf(file, "is_image=%d\n", proj->media_pool[i].is_image ? 1 : 0);
+        fprintf(file, "missing=%d\n", proj->media_pool[i].missing ? 1 : 0);
     }
 
     for (size_t i = 0; i < proj->num_clips; ++i) {
         const muzza_clip* clip = &proj->clips[i];
         fprintf(file, "\n[Clip %zu]\n", i);
+        fprintf(file, "uid=%llu\n", (unsigned long long)clip->uid);
         fprintf(file, "media=%d\n", clip->media_id);
         fprintf(file, "track=%d\n", clip->track_index);
         fprintf(file, "type=%d\n", (int)clip->type);
@@ -593,10 +920,13 @@ bool project_save(muzza_project* proj, const char* filepath) {
         fprintf(file, "pos_y=%.3f\n", clip->pos_y);
         fprintf(file, "filter=%d\n", (int)clip->filter);
         fprintf(file, "selected=%d\n", clip->selected ? 1 : 0);
+        fprintf(file, "link_group=%llu\n", (unsigned long long)clip->link_group_id);
+        fprintf(file, "link_role=%d\n", (int)clip->link_role);
     }
 
     fclose(file);
     copy_string(proj->filepath, sizeof(proj->filepath), filepath);
+    proj->dirty = false;
     return true;
 }
 
@@ -672,11 +1002,13 @@ muzza_project* project_load(const char* filepath) {
             } else if (strncmp(key, "track_height_", 13) == 0) {
                 int track = atoi(key + 13);
                 if (track >= 0 && track < MUZZA_MAX_TRACKS) {
-                    proj->track_heights[track] = (float)strtod(value, NULL);
+                    proj->tracks[track].height = (float)strtod(value, NULL);
                 }
             }
         } else if (section == SECTION_MEDIA && media.active) {
-            if (strcmp(key, "path") == 0) {
+            if (strcmp(key, "uid") == 0) {
+                media.uid = (uint64_t)strtoull(value, NULL, 10);
+            } else if (strcmp(key, "path") == 0) {
                 copy_string(media.filepath, sizeof(media.filepath), value);
             } else if (strcmp(key, "duration") == 0) {
                 media.duration = strtod(value, NULL);
@@ -686,9 +1018,13 @@ muzza_project* project_load(const char* filepath) {
                 media.has_audio = atoi(value) != 0;
             } else if (strcmp(key, "is_image") == 0) {
                 media.is_image = atoi(value) != 0;
+            } else if (strcmp(key, "missing") == 0) {
+                media.missing = atoi(value) != 0;
             }
         } else if (section == SECTION_CLIP && clip.active) {
-            if (strcmp(key, "media") == 0) {
+            if (strcmp(key, "uid") == 0) {
+                clip.uid = (uint64_t)strtoull(value, NULL, 10);
+            } else if (strcmp(key, "media") == 0) {
                 clip.media_id = atoi(value);
             } else if (strcmp(key, "track") == 0) {
                 clip.track_index = atoi(value);
@@ -712,6 +1048,10 @@ muzza_project* project_load(const char* filepath) {
                 clip.filter = (muzza_filter_type)atoi(value);
             } else if (strcmp(key, "selected") == 0) {
                 clip.selected = atoi(value) != 0;
+            } else if (strcmp(key, "link_group") == 0) {
+                clip.link_group_id = (uint64_t)strtoull(value, NULL, 10);
+            } else if (strcmp(key, "link_role") == 0) {
+                clip.link_role = (muzza_link_role)atoi(value);
             }
         }
     }

@@ -34,3 +34,4 @@ autosave.muzza
 *.swo
 *~
 .DS_Store
+test_fixtures/generated/

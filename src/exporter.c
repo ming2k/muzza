@@ -12,10 +12,104 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
+#include <unistd.h>
 
 #define EXPORT_FPS 30.0
 #define EXPORT_AUDIO_RATE 48000
 #define EXPORT_AUDIO_CH 2
+
+/* -------------------------------------------------------------------------- */
+/* Format registry                                                            */
+/* -------------------------------------------------------------------------- */
+typedef struct {
+    muzza_export_format format;
+    const char* name;
+    const char* ext;
+    const char* video_codec_name;
+    const char* video_codec_fb;
+    enum AVCodecID video_codec_id;
+    const char* audio_codec_name;
+    enum AVCodecID audio_codec_id;
+    bool has_video;
+    bool has_audio;
+} format_desc;
+
+static const format_desc FORMATS[] = {
+    {MUZZA_FORMAT_MP4_H264,   "MP4 (H.264 / AAC)",   "mp4",  "libx264",      "h264",  AV_CODEC_ID_H264,   "aac",        AV_CODEC_ID_AAC,       true,  true},
+    {MUZZA_FORMAT_MP4_HEVC,   "MP4 (H.265 / AAC)",   "mp4",  "libx265",      "hevc",  AV_CODEC_ID_HEVC,   "aac",        AV_CODEC_ID_AAC,       true,  true},
+    {MUZZA_FORMAT_WEBM_VP9,   "WebM (VP9 / Opus)",   "webm", "libvpx-vp9",   "vp9",   AV_CODEC_ID_VP9,    "libopus",    AV_CODEC_ID_OPUS,      true,  true},
+    {MUZZA_FORMAT_MOV_PRORES, "MOV (ProRes / PCM)",  "mov",  "prores",       NULL,    AV_CODEC_ID_PRORES, "pcm_s24le",  AV_CODEC_ID_PCM_S24LE, true,  true},
+    {MUZZA_FORMAT_MKV,        "MKV (H.264 / FLAC)",  "mkv",  "libx264",      "h264",  AV_CODEC_ID_H264,   "flac",       AV_CODEC_ID_FLAC,      true,  true},
+    {MUZZA_FORMAT_MP3,        "MP3 (Audio only)",    "mp3",  NULL,           NULL,    AV_CODEC_ID_NONE,   "libmp3lame", AV_CODEC_ID_MP3,       false, true},
+    {MUZZA_FORMAT_WAV,        "WAV (Audio only)",    "wav",  NULL,           NULL,    AV_CODEC_ID_NONE,   "pcm_s16le",  AV_CODEC_ID_PCM_S16LE, false, true},
+};
+
+static const char* PRESET_NAMES[] = {
+    "ultrafast", "superfast", "veryfast", "faster",
+    "fast", "medium", "slow", "slower", "veryslow"
+};
+#define NUM_PRESETS (sizeof(PRESET_NAMES) / sizeof(PRESET_NAMES[0]))
+
+static const format_desc* get_format_desc(muzza_export_format fmt) {
+    for (size_t i = 0; i < sizeof(FORMATS) / sizeof(FORMATS[0]); ++i) {
+        if (FORMATS[i].format == fmt) return &FORMATS[i];
+    }
+    return &FORMATS[0];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Export snapshot: immutable copy of project data captured at export start.  */
+/* -------------------------------------------------------------------------- */
+typedef struct {
+    muzza_project proj;
+    muzza_media* media_pool;
+    muzza_clip* clips;
+} export_snapshot;
+
+static bool snapshot_create(export_snapshot* snap, const muzza_project* proj) {
+    if (!snap || !proj) return false;
+    memset(snap, 0, sizeof(*snap));
+    snap->proj.duration = proj->duration;
+    snap->proj.num_media = proj->num_media;
+    snap->proj.num_clips = proj->num_clips;
+
+    if (proj->num_media > 0) {
+        snap->media_pool = calloc(proj->num_media, sizeof(*snap->media_pool));
+        if (!snap->media_pool) return false;
+        for (size_t i = 0; i < proj->num_media; ++i) {
+            snap->media_pool[i] = proj->media_pool[i];
+            snap->media_pool[i].dec = NULL;
+            snap->media_pool[i].waveform.mins = NULL;
+            snap->media_pool[i].waveform.maxs = NULL;
+            snap->media_pool[i].waveform.num_peaks = 0;
+        }
+        snap->proj.media_pool = snap->media_pool;
+    }
+
+    if (proj->num_clips > 0) {
+        snap->clips = calloc(proj->num_clips, sizeof(*snap->clips));
+        if (!snap->clips) {
+            free(snap->media_pool);
+            snap->media_pool = NULL;
+            return false;
+        }
+        for (size_t i = 0; i < proj->num_clips; ++i) {
+            snap->clips[i] = proj->clips[i];
+            snap->clips[i].dec = NULL;
+        }
+        snap->proj.clips = snap->clips;
+    }
+
+    return true;
+}
+
+static void snapshot_destroy(export_snapshot* snap) {
+    if (!snap) return;
+    free(snap->media_pool);
+    free(snap->clips);
+    memset(snap, 0, sizeof(*snap));
+}
 
 /* -------------------------------------------------------------------------- */
 /* Per-source-media lightweight decoder used only by the export pipeline.     */
@@ -49,7 +143,8 @@ typedef struct {
 /* Main exporter state                                                        */
 /* -------------------------------------------------------------------------- */
 struct muzza_exporter {
-    const muzza_project* project;
+    export_snapshot snapshot;
+    muzza_export_settings settings;
     char output_path[512];
 
     volatile muzza_export_status status;
@@ -231,7 +326,7 @@ static export_src_decoder* ensure_src_dec_video(muzza_exporter* exp, int media_i
     export_src_decoder* dec = get_src_dec(exp, media_id, true);
     if (dec) return dec;
 
-    muzza_media* media = project_get_media((muzza_project*)exp->project, media_id);
+    muzza_media* media = project_get_media((muzza_project*)&exp->snapshot.proj, media_id);
     if (!media) return NULL;
 
     if (exp->num_srcs >= exp->src_cap) {
@@ -255,7 +350,7 @@ static export_src_decoder* ensure_src_dec_audio(muzza_exporter* exp, int media_i
     export_src_decoder* dec = get_src_dec(exp, media_id, false);
     if (dec) return dec;
 
-    muzza_media* media = project_get_media((muzza_project*)exp->project, media_id);
+    muzza_media* media = project_get_media((muzza_project*)&exp->snapshot.proj, media_id);
     if (!media) return NULL;
 
     if (exp->num_srcs >= exp->src_cap) {
@@ -397,11 +492,23 @@ static int src_dec_consume_audio(export_src_decoder* dec, float* out_planes[EXPO
 /* Output encoder setup                                                       */
 /* -------------------------------------------------------------------------- */
 static bool init_video_encoder(muzza_exporter* exp) {
-    const AVCodec* codec = avcodec_find_encoder_by_name("libx264");
-    if (!codec) codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    if (!codec) codec = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    const format_desc* fmt = get_format_desc(exp->settings.format);
+    if (!fmt || !fmt->has_video || !exp->settings.include_video) {
+        return true; /* no video requested, skip */
+    }
+
+    const AVCodec* codec = NULL;
+    if (fmt->video_codec_name) {
+        codec = avcodec_find_encoder_by_name(fmt->video_codec_name);
+    }
+    if (!codec && fmt->video_codec_fb) {
+        codec = avcodec_find_encoder_by_name(fmt->video_codec_fb);
+    }
+    if (!codec && fmt->video_codec_id != AV_CODEC_ID_NONE) {
+        codec = avcodec_find_encoder(fmt->video_codec_id);
+    }
     if (!codec) {
-        set_error_str(exp, "No suitable video encoder found");
+        set_error_str(exp, "No suitable video encoder found for selected format");
         return false;
     }
 
@@ -411,10 +518,10 @@ static bool init_video_encoder(muzza_exporter* exp) {
         return false;
     }
 
-    exp->venc->width = exp->out_w;
-    exp->venc->height = exp->out_h;
-    exp->venc->time_base = (AVRational){1, (int)EXPORT_FPS};
-    exp->venc->framerate = (AVRational){(int)EXPORT_FPS, 1};
+    exp->venc->width = exp->settings.width;
+    exp->venc->height = exp->settings.height;
+    exp->venc->time_base = (AVRational){1, (int)exp->settings.fps};
+    exp->venc->framerate = (AVRational){(int)exp->settings.fps, 1};
     exp->venc->pix_fmt = AV_PIX_FMT_YUV420P;
     exp->venc->gop_size = 30;
     exp->venc->max_b_frames = 2;
@@ -423,9 +530,50 @@ static bool init_video_encoder(muzza_exporter* exp) {
         exp->venc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     }
 
-    av_opt_set(exp->venc->priv_data, "preset", "fast", 0);
-    av_opt_set(exp->venc->priv_data, "tune", "fastdecode", 0);
-    av_opt_set(exp->venc->priv_data, "crf", "23", 0);
+    /* Apply codec-specific quality settings */
+    if (strcmp(codec->name, "libx264") == 0 || strcmp(codec->name, "libx265") == 0) {
+        int p = exp->settings.preset;
+        if (p < 0) p = 0;
+        if (p >= (int)NUM_PRESETS) p = (int)NUM_PRESETS - 1;
+        av_opt_set(exp->venc->priv_data, "preset", PRESET_NAMES[p], 0);
+        av_opt_set(exp->venc->priv_data, "tune", "fastdecode", 0);
+
+        if (exp->settings.video_bitrate > 0) {
+            exp->venc->bit_rate = (int64_t)exp->settings.video_bitrate * 1000;
+            exp->venc->rc_min_rate = exp->venc->bit_rate;
+            exp->venc->rc_max_rate = exp->venc->bit_rate;
+            exp->venc->bit_rate_tolerance = exp->venc->bit_rate / 10;
+            exp->venc->rc_buffer_size = exp->venc->bit_rate;
+        } else {
+            char crf_str[8];
+            int crf = exp->settings.crf;
+            if (crf < 0) crf = 0;
+            if (crf > 51) crf = 51;
+            snprintf(crf_str, sizeof(crf_str), "%d", crf);
+            av_opt_set(exp->venc->priv_data, "crf", crf_str, 0);
+        }
+    } else if (strcmp(codec->name, "libvpx-vp9") == 0) {
+        av_opt_set(exp->venc->priv_data, "deadline", "good", 0);
+        av_opt_set(exp->venc->priv_data, "cpu-used", "2", 0);
+        if (exp->settings.video_bitrate > 0) {
+            exp->venc->bit_rate = (int64_t)exp->settings.video_bitrate * 1000;
+        } else {
+            char crf_str[8];
+            int crf = exp->settings.crf;
+            if (crf < 0) crf = 23;
+            if (crf > 63) crf = 63;
+            snprintf(crf_str, sizeof(crf_str), "%d", crf);
+            av_opt_set(exp->venc->priv_data, "crf", crf_str, 0);
+            exp->venc->bit_rate = 0;
+        }
+    } else if (strstr(codec->name, "prores") != NULL) {
+        av_opt_set(exp->venc->priv_data, "profile", "standard", 0);
+        exp->venc->bit_rate = 0;
+    } else {
+        if (exp->settings.video_bitrate > 0) {
+            exp->venc->bit_rate = (int64_t)exp->settings.video_bitrate * 1000;
+        }
+    }
 
     if (avcodec_open2(exp->venc, codec, NULL) < 0) {
         set_error_str(exp, "Failed to open video encoder");
@@ -463,9 +611,20 @@ static bool init_video_encoder(muzza_exporter* exp) {
 }
 
 static bool init_audio_encoder(muzza_exporter* exp) {
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    const format_desc* fmt = get_format_desc(exp->settings.format);
+    if (!fmt || !fmt->has_audio || !exp->settings.include_audio) {
+        return true; /* no audio requested, skip */
+    }
+
+    const AVCodec* codec = NULL;
+    if (fmt->audio_codec_name) {
+        codec = avcodec_find_encoder_by_name(fmt->audio_codec_name);
+    }
+    if (!codec && fmt->audio_codec_id != AV_CODEC_ID_NONE) {
+        codec = avcodec_find_encoder(fmt->audio_codec_id);
+    }
     if (!codec) {
-        set_error_str(exp, "AAC encoder not available");
+        set_error_str(exp, "Audio encoder not available for selected format");
         return false;
     }
 
@@ -475,11 +634,23 @@ static bool init_audio_encoder(muzza_exporter* exp) {
         return false;
     }
 
-    exp->aenc->sample_rate = EXPORT_AUDIO_RATE;
-    av_channel_layout_default(&exp->aenc->ch_layout, EXPORT_AUDIO_CH);
-    exp->aenc->sample_fmt = AV_SAMPLE_FMT_FLTP;
-    exp->aenc->time_base = (AVRational){1, EXPORT_AUDIO_RATE};
-    exp->aenc->bit_rate = 128000;
+    exp->aenc->sample_rate = exp->settings.audio_sample_rate;
+    av_channel_layout_default(&exp->aenc->ch_layout, exp->settings.audio_channels);
+
+    if (strcmp(codec->name, "pcm_s16le") == 0) {
+        exp->aenc->sample_fmt = AV_SAMPLE_FMT_S16;
+    } else if (strcmp(codec->name, "pcm_s24le") == 0) {
+        exp->aenc->sample_fmt = AV_SAMPLE_FMT_S32;
+    } else {
+        exp->aenc->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    }
+
+    exp->aenc->time_base = (AVRational){1, exp->aenc->sample_rate};
+
+    if (exp->settings.audio_bitrate > 0 &&
+        fmt->format != MUZZA_FORMAT_WAV && fmt->format != MUZZA_FORMAT_MOV_PRORES) {
+        exp->aenc->bit_rate = (int64_t)exp->settings.audio_bitrate * 1000;
+    }
 
     if (exp->out_fmt->oformat->flags & AVFMT_GLOBALHEADER) {
         exp->aenc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -502,13 +673,13 @@ static bool init_audio_encoder(muzza_exporter* exp) {
     }
     exp->astream->time_base = exp->aenc->time_base;
 
-    /* Allocate FLTP frame */
+    /* Allocate frame matching encoder sample format */
     exp->aframe = av_frame_alloc();
     if (!exp->aframe) {
         set_error_str(exp, "Failed to alloc audio frame");
         return false;
     }
-    exp->aframe->format = AV_SAMPLE_FMT_FLTP;
+    exp->aframe->format = exp->aenc->sample_fmt;
     av_channel_layout_default(&exp->aframe->ch_layout, EXPORT_AUDIO_CH);
     exp->aframe->sample_rate = EXPORT_AUDIO_RATE;
     exp->aframe->nb_samples = exp->aenc->frame_size;
@@ -517,7 +688,7 @@ static bool init_audio_encoder(muzza_exporter* exp) {
         return false;
     }
 
-    /* Mix buffer */
+    /* Mix buffer: always planar float for internal mixing */
     exp->mix_cap = exp->aenc->frame_size > 0 ? exp->aenc->frame_size : 1024;
     for (int c = 0; c < EXPORT_AUDIO_CH; ++c) {
         exp->mix_buf[c] = calloc((size_t)exp->mix_cap, sizeof(float));
@@ -568,7 +739,7 @@ static bool write_packet(muzza_exporter* exp, AVCodecContext* enc, AVStream* st)
 /* Encode one video frame                                                     */
 /* -------------------------------------------------------------------------- */
 static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
-    int vclip_idx = find_top_video_clip(exp->project, timeline_time);
+    int vclip_idx = find_top_video_clip(&exp->snapshot.proj, timeline_time);
     AVFrame* src_frame = av_frame_alloc();
     bool got_frame = false;
 
@@ -578,12 +749,12 @@ static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
     }
 
     if (vclip_idx >= 0) {
-        const muzza_clip* clip = &exp->project->clips[vclip_idx];
-        double media_time = project_get_clip_media_time(exp->project, clip, timeline_time);
+        const muzza_clip* clip = &exp->snapshot.proj.clips[vclip_idx];
+        double media_time = project_get_clip_media_time(&exp->snapshot.proj, clip, timeline_time);
         export_src_decoder* dec = ensure_src_dec_video(exp, clip->media_id);
 
         if (dec && dec->has_video) {
-            muzza_media* media = project_get_media((muzza_project*)exp->project, clip->media_id);
+            muzza_media* media = project_get_media((muzza_project*)&exp->snapshot.proj, clip->media_id);
             bool is_image = media && media->is_image;
 
             /* Seek only on clip change or large time jump (>0.5s) */
@@ -660,7 +831,7 @@ static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
 /* -------------------------------------------------------------------------- */
 static bool encode_audio_frame(muzza_exporter* exp, double timeline_time) {
     int aclip_indices[16];
-    int num_aclips = find_active_audio_clips(exp->project, timeline_time, aclip_indices, 16);
+    int num_aclips = find_active_audio_clips(&exp->snapshot.proj, timeline_time, aclip_indices, 16);
 
     int frame_size = exp->aenc->frame_size;
     if (frame_size <= 0) frame_size = 1024;
@@ -677,11 +848,11 @@ static bool encode_audio_frame(muzza_exporter* exp, double timeline_time) {
 
     int max_got = 0;
     for (int i = 0; i < num_aclips; ++i) {
-        const muzza_clip* clip = &exp->project->clips[aclip_indices[i]];
+        const muzza_clip* clip = &exp->snapshot.proj.clips[aclip_indices[i]];
         export_src_decoder* dec = ensure_src_dec_audio(exp, clip->media_id);
         if (!dec || !dec->has_audio) continue;
 
-        double media_time = project_get_clip_media_time(exp->project, clip, timeline_time);
+        double media_time = project_get_clip_media_time(&exp->snapshot.proj, clip, timeline_time);
 
         /* Seek only on first use or large time jump (>0.5s) */
         if (dec->audio_cursor < 0.0 || fabs(media_time - dec->audio_cursor) > 0.5) {
@@ -750,8 +921,31 @@ static bool encode_audio_frame(muzza_exporter* exp, double timeline_time) {
         set_error_str(exp, "av_frame_make_writable (audio) failed");
         return false;
     }
-    for (int c = 0; c < EXPORT_AUDIO_CH; ++c) {
-        memcpy(exp->aframe->data[c], exp->mix_buf[c], sizeof(float) * (size_t)frame_size);
+    /* Convert planar-float mix buffer to encoder sample format */
+    if (exp->aframe->format == AV_SAMPLE_FMT_FLTP) {
+        for (int c = 0; c < EXPORT_AUDIO_CH; ++c) {
+            memcpy(exp->aframe->data[c], exp->mix_buf[c], sizeof(float) * (size_t)frame_size);
+        }
+    } else if (exp->aframe->format == AV_SAMPLE_FMT_S16) {
+        for (int c = 0; c < EXPORT_AUDIO_CH; ++c) {
+            int16_t* dst = (int16_t*)exp->aframe->data[c];
+            for (int s = 0; s < frame_size; ++s) {
+                float v = exp->mix_buf[c][s] * 0.98f;
+                if (v > 1.0f) v = 1.0f;
+                if (v < -1.0f) v = -1.0f;
+                dst[s] = (int16_t)(v * 32767.0f);
+            }
+        }
+    } else if (exp->aframe->format == AV_SAMPLE_FMT_S32) {
+        for (int c = 0; c < EXPORT_AUDIO_CH; ++c) {
+            int32_t* dst = (int32_t*)exp->aframe->data[c];
+            for (int s = 0; s < frame_size; ++s) {
+                float v = exp->mix_buf[c][s] * 0.98f;
+                if (v > 1.0f) v = 1.0f;
+                if (v < -1.0f) v = -1.0f;
+                dst[s] = (int32_t)(v * 2147483647.0f);
+            }
+        }
     }
     exp->aframe->pts = exp->apts;
     exp->apts += frame_size;
@@ -771,12 +965,12 @@ static bool encode_audio_frame(muzza_exporter* exp, double timeline_time) {
 /* -------------------------------------------------------------------------- */
 static int export_worker(void* userdata) {
     muzza_exporter* exp = (muzza_exporter*)userdata;
-    double total_dur = exp->project->duration;
+    double total_dur = exp->snapshot.proj.duration;
     double vtime = 0.0;
     double atime = 0.0;
-    double vstep = 1.0 / EXPORT_FPS;
+    double vstep = 1.0 / exp->settings.fps;
     int aframe_size = exp->aenc->frame_size > 0 ? exp->aenc->frame_size : 1024;
-    double astep = (double)aframe_size / EXPORT_AUDIO_RATE;
+    double astep = (double)aframe_size / exp->settings.audio_sample_rate;
 
     exp->status = MUZZA_EXPORT_RUNNING;
 
@@ -843,7 +1037,7 @@ static int export_worker(void* userdata) {
 /* -------------------------------------------------------------------------- */
 /* Public API                                                                 */
 /* -------------------------------------------------------------------------- */
-muzza_exporter* exporter_create(const muzza_project* project, const char* output_path) {
+muzza_exporter* exporter_create(const muzza_project* project, const char* output_path, const muzza_export_settings* settings) {
     muzza_exporter* exp = NULL;
     int ret = 0;
 
@@ -852,7 +1046,27 @@ muzza_exporter* exporter_create(const muzza_project* project, const char* output
     exp = calloc(1, sizeof(*exp));
     if (!exp) return NULL;
 
-    exp->project = project;
+    if (settings) {
+        exp->settings = *settings;
+    } else {
+        exp->settings.width = 1920;
+        exp->settings.height = 1080;
+        exp->settings.fps = 30.0;
+        exp->settings.audio_sample_rate = 48000;
+        exp->settings.audio_channels = 2;
+        exp->settings.include_video = true;
+        exp->settings.include_audio = true;
+        exp->settings.format = MUZZA_FORMAT_MP4_H264;
+        exp->settings.video_bitrate = 0;
+        exp->settings.crf = 23;
+        exp->settings.audio_bitrate = 128;
+        exp->settings.preset = 4; /* medium */
+    }
+
+    if (!snapshot_create(&exp->snapshot, project)) {
+        free(exp);
+        return NULL;
+    }
     snprintf(exp->output_path, sizeof(exp->output_path), "%s", output_path);
     exp->status = MUZZA_EXPORT_IDLE;
     exp->progress = 0.0;
@@ -860,30 +1074,32 @@ muzza_exporter* exporter_create(const muzza_project* project, const char* output
     exp->current_vclip_idx = -1;
     exp->current_vclip_media_time = -1.0;
 
-    /* Determine output resolution from first video clip, fallback to 1920x1080 */
-    exp->out_w = 1920;
-    exp->out_h = 1080;
-    for (size_t i = 0; i < project->num_clips; ++i) {
-        if (project->clips[i].type == MUZZA_CLIP_VIDEO) {
-            muzza_media* media = project_get_media((muzza_project*)project, project->clips[i].media_id);
-            if (media && media->dec) {
-                int w = 0, h = 0;
-                decoder_get_image(media->dec, &w, &h);
-                if (w > 0 && h > 0) {
-                    exp->out_w = w;
-                    exp->out_h = h;
-                    break;
+    /* Determine output resolution from settings or first video clip */
+    exp->out_w = exp->settings.width;
+    exp->out_h = exp->settings.height;
+    if (exp->out_w <= 0 || exp->out_h <= 0) {
+        for (size_t i = 0; i < project->num_clips; ++i) {
+            if (project->clips[i].type == MUZZA_CLIP_VIDEO) {
+                muzza_media* media = project_get_media((muzza_project*)project, project->clips[i].media_id);
+                if (media && media->dec) {
+                    int w = 0, h = 0;
+                    decoder_get_image(media->dec, &w, &h);
+                    if (w > 0 && h > 0) {
+                        exp->out_w = w;
+                        exp->out_h = h;
+                        break;
+                    }
                 }
-            }
-            /* Try to open a temp decoder to read dimensions */
-            export_src_decoder tmp_dec = {0};
-            if (src_dec_open(&tmp_dec, media->filepath, true)) {
-                if (tmp_dec.has_video && tmp_dec.video_ctx) {
-                    exp->out_w = tmp_dec.video_ctx->width;
-                    exp->out_h = tmp_dec.video_ctx->height;
+                /* Try to open a temp decoder to read dimensions */
+                export_src_decoder tmp_dec = {0};
+                if (src_dec_open(&tmp_dec, media->filepath, true)) {
+                    if (tmp_dec.has_video && tmp_dec.video_ctx) {
+                        exp->out_w = tmp_dec.video_ctx->width;
+                        exp->out_h = tmp_dec.video_ctx->height;
+                    }
+                    src_dec_close(&tmp_dec);
+                    if (exp->out_w > 0 && exp->out_h > 0) break;
                 }
-                src_dec_close(&tmp_dec);
-                if (exp->out_w > 0 && exp->out_h > 0) break;
             }
         }
     }
@@ -953,6 +1169,7 @@ void exporter_destroy(muzza_exporter* exp) {
         avformat_free_context(exp->out_fmt);
     }
 
+    snapshot_destroy(&exp->snapshot);
     free(exp);
 }
 
@@ -985,6 +1202,86 @@ double exporter_get_progress(muzza_exporter* exp) {
 const char* exporter_get_error(muzza_exporter* exp) {
     if (!exp) return "";
     return exp->error_msg;
+}
+
+const char* exporter_format_name(muzza_export_format format) {
+    const format_desc* d = get_format_desc(format);
+    return d ? d->name : "Unknown";
+}
+
+const char* exporter_format_extension(muzza_export_format format) {
+    const format_desc* d = get_format_desc(format);
+    return d ? d->ext : "mp4";
+}
+
+bool exporter_format_has_video(muzza_export_format format) {
+    const format_desc* d = get_format_desc(format);
+    return d ? d->has_video : true;
+}
+
+bool exporter_format_has_audio(muzza_export_format format) {
+    const format_desc* d = get_format_desc(format);
+    return d ? d->has_audio : true;
+}
+
+void exporter_build_default_path(const muzza_project* project, const muzza_export_settings* settings, char* out, size_t out_size) {
+    if (!out || out_size == 0) return;
+
+    const char* base = (project && project->filepath[0]) ? project->filepath : "untitled";
+    char stem[512] = {0};
+    snprintf(stem, sizeof(stem), "%s", base);
+    char* dot = strrchr(stem, '.');
+    if (dot) *dot = '\0';
+
+    /* Extract just the filename stem (no directory) */
+    char* slash = strrchr(stem, '/');
+    if (!slash) slash = strrchr(stem, '\\');
+    const char* filename_stem = slash ? slash + 1 : stem;
+
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    char timestamp[32] = {0};
+    if (tm_info) {
+        strftime(timestamp, sizeof(timestamp), "%Y%m%d-%H%M%S", tm_info);
+    } else {
+        snprintf(timestamp, sizeof(timestamp), "unknown");
+    }
+
+    const char* ext = exporter_format_extension(settings ? settings->format : MUZZA_FORMAT_MP4_H264);
+    int w = settings ? settings->width : 1920;
+    int h = settings ? settings->height : 1080;
+
+    /* Determine output directory from project path, or current directory */
+    const char* dir = ".";
+    char dir_buf[512] = {0};
+    if (project && project->filepath[0]) {
+        snprintf(dir_buf, sizeof(dir_buf), "%s", project->filepath);
+        char* last_slash = strrchr(dir_buf, '/');
+        if (!last_slash) last_slash = strrchr(dir_buf, '\\');
+        if (last_slash) {
+            *last_slash = '\0';
+            dir = dir_buf;
+        }
+    }
+
+    char candidate[2048] = {0};
+    snprintf(candidate, sizeof(candidate), "%s/%s_%s_%dx%d.%s",
+             dir, filename_stem, timestamp, w, h, ext);
+
+    /* Version increment to avoid overwrite */
+    if (access(candidate, F_OK) == 0) {
+        for (int v = 2; v < 1000; ++v) {
+            char try_path[2048] = {0};
+            snprintf(try_path, sizeof(try_path), "%s/%s_%s_%dx%d_v%d.%s",
+                     dir, filename_stem, timestamp, w, h, v, ext);
+            if (access(try_path, F_OK) != 0) {
+                snprintf(candidate, sizeof(candidate), "%s", try_path);
+                break;
+            }
+        }
+    }
+
+    snprintf(out, out_size, "%s", candidate);
 }
 
 void exporter_request_cancel(muzza_exporter* exp) {

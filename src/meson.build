@@ -40,6 +40,7 @@ executable('muzza',
     'ui_import_browser_panel.c',
     'ui_media_panel.c',
     'ui_monitor_panel.c',
+    'ui_icons.c',
     'ui_shared.c',
     'ui_text.c',
     'ui_timeline_panel.c',
@@ -63,5 +64,11 @@ core_test = executable('muzza-core-test',
   dependencies : core_deps,
 )
 
+exporter_test = executable('muzza-exporter-test',
+  ['test_exporter.c', 'exporter.c', 'project.c', 'decoder.c', 'path_utils.c'],
+  dependencies : core_deps,
+)
+
 test('project-roundtrip', project_test)
 test('core-regression', core_test)
+test('exporter-smoke', exporter_test)

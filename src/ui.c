@@ -120,12 +120,21 @@ void ui_begin_frame(muzza_ui_state* state) {
     state->input.zoom_out_pressed = false;
     state->input.wheel_x = 0.0f;
     state->input.wheel_y = 0.0f;
+
+    state->dialog_input.left_pressed = false;
+    state->dialog_input.left_released = false;
+    state->dialog_input.right_pressed = false;
+    state->dialog_input.right_released = false;
+    state->dialog_input.zoom_in_pressed = false;
+    state->dialog_input.zoom_out_pressed = false;
+    state->dialog_input.wheel_x = 0.0f;
+    state->dialog_input.wheel_y = 0.0f;
 }
 
-void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* window) {
+void ui_handle_event(muzza_ui_state* state, muzza_input_state* target_input, const SDL_Event* event, SDL_Window* window) {
     float scale = window ? SDL_GetWindowDisplayScale(window) : 1.0f;
 
-    if (!state || !event) {
+    if (!state || !target_input || !event) {
         return;
     }
 
@@ -134,31 +143,31 @@ void ui_handle_event(muzza_ui_state* state, const SDL_Event* event, SDL_Window* 
     }
 
     if (event->type == SDL_EVENT_MOUSE_MOTION) {
-        state->input.x = event->motion.x * scale;
-        state->input.y = event->motion.y * scale;
+        target_input->x = event->motion.x * scale;
+        target_input->y = event->motion.y * scale;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN && event->button.button == SDL_BUTTON_LEFT) {
-        state->input.x = event->button.x * scale;
-        state->input.y = event->button.y * scale;
-        state->input.left_down = true;
-        state->input.left_pressed = true;
+        target_input->x = event->button.x * scale;
+        target_input->y = event->button.y * scale;
+        target_input->left_down = true;
+        target_input->left_pressed = true;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN && event->button.button == SDL_BUTTON_RIGHT) {
-        state->input.x = event->button.x * scale;
-        state->input.y = event->button.y * scale;
-        state->input.right_down = true;
-        state->input.right_pressed = true;
+        target_input->x = event->button.x * scale;
+        target_input->y = event->button.y * scale;
+        target_input->right_down = true;
+        target_input->right_pressed = true;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP && event->button.button == SDL_BUTTON_LEFT) {
-        state->input.x = event->button.x * scale;
-        state->input.y = event->button.y * scale;
-        state->input.left_down = false;
-        state->input.left_released = true;
+        target_input->x = event->button.x * scale;
+        target_input->y = event->button.y * scale;
+        target_input->left_down = false;
+        target_input->left_released = true;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP && event->button.button == SDL_BUTTON_RIGHT) {
-        state->input.x = event->button.x * scale;
-        state->input.y = event->button.y * scale;
-        state->input.right_down = false;
-        state->input.right_released = true;
+        target_input->x = event->button.x * scale;
+        target_input->y = event->button.y * scale;
+        target_input->right_down = false;
+        target_input->right_released = true;
     } else if (event->type == SDL_EVENT_MOUSE_WHEEL) {
-        state->input.wheel_x = event->wheel.x;
-        state->input.wheel_y = event->wheel.y;
+        target_input->wheel_x = event->wheel.x;
+        target_input->wheel_y = event->wheel.y;
     } else if (event->type == SDL_EVENT_KEY_DOWN) {
         switch (event->key.key) {
             case SDLK_LCTRL: case SDLK_RCTRL: state->input.ctrl_down = true; break;
@@ -238,4 +247,5 @@ void ui_render(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actio
         state->media_panel.is_dragging_media = false;
         state->media_panel.dragged_media_index = -1;
     }
+
 }
