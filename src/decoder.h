@@ -22,6 +22,11 @@ fx_image* decoder_get_image(muzza_decoder* dec, int* w, int* h);
 float decoder_get_progress(muzza_decoder* dec);
 double decoder_get_duration(muzza_decoder* dec);
 double decoder_get_time(muzza_decoder* dec);
+/* Estimated current audio playback position (decoded PTS minus what is still
+   queued in the SDL audio stream waiting to be played). For video-only
+   decoders or before any audio has been decoded this returns the same value
+   as decoder_get_time. */
+double decoder_get_audio_play_time(muzza_decoder* dec);
 void decoder_seek(muzza_decoder* dec, float progress);
 bool decoder_seek_to_time(muzza_decoder* dec, double time_seconds);
 
@@ -32,6 +37,6 @@ bool decoder_has_audio(muzza_decoder* dec);
 
 bool decoder_is_image(muzza_decoder* dec);
 
-bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_peaks);
+bool decoder_generate_waveform(const char* filepath, float* out_mins, float* out_maxs, int num_peaks, double duration);
 
 #endif

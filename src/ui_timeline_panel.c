@@ -4,16 +4,9 @@
 #include <math.h>
 
 #include "path_utils.h"
+#include "project.h"
 #include "ui_shared.h"
 #include "ui_text.h"
-
-static float time_to_x(double time, float tracks_x, double scroll_x, float zoom, float s) {
-    return tracks_x + (float)(time - scroll_x) * zoom * s;
-}
-
-static double x_to_time(float x_coord, float tracks_x, double scroll_x, float zoom, float s) {
-    return (double)((x_coord - tracks_x) / (zoom * s)) + scroll_x;
-}
 
 static bool timeline_drop_target(const muzza_ui_state* state, float x, float y, float w, float h, double* out_time, int* out_track, float* out_line_x, float* out_track_y, float* out_track_h) {
     const float s = (state && state->ui_scale > 1.0f) ? state->ui_scale : 1.0f;
@@ -32,7 +25,7 @@ static bool timeline_drop_target(const muzza_ui_state* state, float x, float y, 
     }
 
     for (int track = 0; track < MUZZA_MAX_TRACKS; ++track) {
-        float track_h = ui_clampf(state->project->track_heights[track] * s, 24.0f * s, h - 50.0f * s);
+        float track_h = ui_clampf(state->project->tracks[track].height * s, 24.0f * s, h - 50.0f * s);
 
         if (ui_point_in_rect(state->input.x, state->input.y, tracks_x, current_y, tracks_w, track_h)) {
             double time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
@@ -101,12 +94,7 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
             else if (state->input.wheel_y < 0.0f || state->input.zoom_out_pressed) zoom_factor = 1.0f / 1.15f;
 
             if (zoom_factor != 0.0f) {
-                double mouse_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
-                timeline->zoom *= zoom_factor;
-                timeline->zoom = ui_clampf(timeline->zoom, 1.0f, 10000.0f);
-                
-                double new_mouse_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
-                timeline->scroll_x += (mouse_time - new_mouse_time);
+                apply_cursor_anchored_zoom(&timeline->scroll_x, &timeline->zoom, tracks_x, state->input.x, zoom_factor, s);
             }
         } else {
             if (state->input.wheel_y != 0.0f) {
@@ -123,45 +111,19 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     if (timeline->is_trimming && timeline->trim_clip_index >= 0 && state->input.left_down) {
         muzza_clip* clip = &proj->clips[timeline->trim_clip_index];
         double mouse_time = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s);
-        muzza_media* media = project_get_media(proj, clip->media_id);
-        double media_dur = media ? media->duration : 0.0;
 
         if (timeline->trim_edge == -1) {
-            // Left trim: adjust tl_start and media_in, keep right edge fixed
-            double old_end = timeline->trim_original_start + timeline->trim_original_duration;
-            double delta = mouse_time - timeline->trim_original_start;
-            double new_start = timeline->trim_original_start + delta;
-            double new_media_in = timeline->trim_original_media_in + delta;
-            double new_dur = old_end - new_start;
-
-            if (new_media_in < 0.0) { new_media_in = 0.0; new_start = timeline->trim_original_start - timeline->trim_original_media_in; new_dur = old_end - new_start; }
-            if (new_dur < 0.1) { new_dur = 0.1; new_start = old_end - 0.1; new_media_in = timeline->trim_original_media_in + (new_start - timeline->trim_original_start); }
-            if (new_media_in + new_dur > media_dur && media_dur > 0.0 && !(media && media->is_image)) {
-                double overflow = (new_media_in + new_dur) - media_dur;
-                new_media_in -= overflow;
-                new_start -= overflow;
-                new_dur = old_end - new_start;
-            }
-            if (new_media_in < 0.0) new_media_in = 0.0;
-            if (new_start < 0.0) { new_start = 0.0; new_dur = old_end; new_media_in = timeline->trim_original_media_in - timeline->trim_original_start; }
-
-            clip->tl_start = new_start;
-            clip->media_in = new_media_in;
-            clip->tl_duration = new_dur;
+            double new_media_in = 0.0;
+            double new_dur = 0.0;
+            project_trim_clip_left(proj, timeline->trim_clip_index, mouse_time, &new_media_in, &new_dur);
         } else if (timeline->trim_edge == 1) {
-            // Right trim: adjust tl_duration, keep left edge fixed
-            double new_dur = mouse_time - timeline->trim_original_start;
-            if (new_dur < 0.1) new_dur = 0.1;
-            if (timeline->trim_original_media_in + new_dur > media_dur && media_dur > 0.0 && !(media && media->is_image)) {
-                new_dur = media_dur - timeline->trim_original_media_in;
-            }
-            clip->tl_duration = new_dur;
+            double new_dur = mouse_time - clip->tl_start;
+            project_trim_clip_right(proj, timeline->trim_clip_index, new_dur);
         }
-        project_recalculate_duration(proj);
     }
 
     for (int track = 0; track < MUZZA_MAX_TRACKS; ++track) {
-        float track_h = ui_clampf(proj->track_heights[track] * s, 24.0f * s, h - 50.0f * s);
+        float track_h = ui_clampf(proj->tracks[track].height * s, 24.0f * s, h - 50.0f * s);
         float edge_y = current_y + track_h;
 
         if (state->input.left_pressed && ui_point_in_rect(state->input.x, state->input.y, x, edge_y - 3.0f * s, w, 6.0f * s)) {
@@ -170,8 +132,8 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
         }
 
         if (state->input.left_down && timeline->is_dragging_track_edge && timeline->dragged_track_index == track) {
-            proj->track_heights[track] = ui_clampf((state->input.y - current_y) / s, 24.0f, 160.0f);
-            track_h = ui_clampf(proj->track_heights[track] * s, 24.0f * s, 160.0f * s);
+            proj->tracks[track].height = ui_clampf((state->input.y - current_y) / s, 24.0f, 160.0f);
+            track_h = ui_clampf(proj->tracks[track].height * s, 24.0f * s, 160.0f * s);
         }
 
         for (size_t clip_index = 0; clip_index < proj->num_clips; ++clip_index) {
@@ -278,17 +240,14 @@ static void update_timeline_interactions(muzza_ui_state* state, muzza_ui_actions
     if (state->input.left_down && timeline->is_dragging_clip && timeline->dragged_clip_index >= 0 && !timeline->is_trimming) {
         muzza_clip* clip = &proj->clips[timeline->dragged_clip_index];
         double new_tl_start = x_to_time(state->input.x, tracks_x, timeline->scroll_x, timeline->zoom, s) - timeline->drag_start_offset;
-        clip->tl_start = new_tl_start < 0.0 ? 0.0 : new_tl_start;
-
-        // Track dragging
+        int drop_track = clip->track_index;
         double drop_time = 0.0;
-        int drop_track = -1;
         if (timeline_drop_target(state, x, y, w, h, &drop_time, &drop_track, NULL, NULL, NULL)) {
-            if (drop_track >= 0 && drop_track < MUZZA_MAX_TRACKS) {
-                clip->track_index = drop_track;
+            if (drop_track < 0 || drop_track >= MUZZA_MAX_TRACKS) {
+                drop_track = clip->track_index;
             }
         }
-        project_recalculate_duration(proj);
+        project_move_clip(proj, timeline->dragged_clip_index, new_tl_start, drop_track);
     }
 
     if (state->input.left_down && timeline->is_scrubbing && !timeline->is_trimming) {
@@ -375,7 +334,7 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
     }
 
     for (int track = 0; track < MUZZA_MAX_TRACKS; ++track) {
-        float track_h = ui_clampf(proj->track_heights[track] * s, 24.0f * s, h - 50.0f * s);
+        float track_h = ui_clampf(proj->tracks[track].height * s, 24.0f * s, h - 50.0f * s);
 
         // Track background (only for the alternate tracks)
         if (track % 2 != 0) {
@@ -439,28 +398,53 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
                 }
             }
             
-            // Draw waveform for audio clips
+            /* Draw waveform for audio clips. Per-pixel column rectangles —
+               robust against quiet/silent stretches that would collapse a
+               filled-polygon approach into a degenerate shape. */
             if (clip->type == MUZZA_CLIP_AUDIO && clip->media_id >= 0 && (size_t)clip->media_id < proj->num_media) {
                 const muzza_media* media = &proj->media_pool[clip->media_id];
-                if (media->waveform.peaks && media->waveform.num_peaks > 0) {
+                if (media->waveform.mins && media->waveform.maxs && media->waveform.num_peaks > 1
+                    && media->duration > 0.0) {
                     float wf_y_center = current_y + track_h * 0.5f;
                     float wf_h_max = track_h - 12.0f * s;
-                    
-                    // We only iterate over the visible part of the clip
-                    float visible_clip_x = (clip_x < tracks_x) ? tracks_x : clip_x;
-                    float visible_clip_end = (clip_x + clip_w > tracks_x + tracks_w) ? tracks_x + tracks_w : clip_x + clip_w;
-                    
-                    for (float ix = visible_clip_x; ix < visible_clip_end; ix += (1.0f * s)) {
-                        double current_tl_time = x_to_time(ix, tracks_x, timeline->scroll_x, timeline->zoom, s);
-                        double media_time = clip->media_in + (current_tl_time - clip->tl_start);
-                        float peak_normalized = (float)(media_time / media->duration);
-                        
-                        if (peak_normalized >= 0.0f && peak_normalized <= 1.0f) {
-                            int peak_idx = (int)(peak_normalized * (media->waveform.num_peaks - 1));
-                            float peak = media->waveform.peaks[peak_idx];
-                            float line_h = peak * wf_h_max;
-                            ui_draw_rect(canvas, ix, wf_y_center - line_h * 0.5f, 1.0f * s, line_h, 0xAAFFFFFF);
+
+                    float vis_x0 = (clip_x < tracks_x) ? tracks_x : clip_x;
+                    float vis_x1 = (clip_x + clip_w > tracks_x + tracks_w)
+                        ? tracks_x + tracks_w : clip_x + clip_w;
+
+                    const fx_color wf_color = 0xCCCCCCCC;
+                    const float col_w = 1.0f * s;
+                    const double inv_zoom_s = 1.0 / ((double)timeline->zoom * s);
+                    const double inv_duration = 1.0 / media->duration;
+                    const int npm1 = media->waveform.num_peaks - 1;
+
+                    for (float px = vis_x0; px < vis_x1; px += col_w) {
+                        double tl_a = (double)(px - tracks_x) * inv_zoom_s + timeline->scroll_x;
+                        double tl_b = tl_a + (double)col_w * inv_zoom_s;
+                        double ma = clip->media_in + (tl_a - clip->tl_start);
+                        double mb = clip->media_in + (tl_b - clip->tl_start);
+                        if (ma < 0.0) ma = 0.0;
+                        if (mb > media->duration) mb = media->duration;
+                        if (mb <= ma) continue;
+
+                        int pa = (int)((ma * inv_duration) * npm1);
+                        int pb = (int)((mb * inv_duration) * npm1);
+                        if (pa < 0) pa = 0;
+                        if (pb < pa) pb = pa;
+                        if (pb > npm1) pb = npm1;
+
+                        float lo = 0.0f;
+                        float hi = 0.0f;
+                        for (int pi = pa; pi <= pb; ++pi) {
+                            if (media->waveform.mins[pi] < lo) lo = media->waveform.mins[pi];
+                            if (media->waveform.maxs[pi] > hi) hi = media->waveform.maxs[pi];
                         }
+
+                        float top_y = wf_y_center - hi * wf_h_max * 0.5f;
+                        float bot_y = wf_y_center - lo * wf_h_max * 0.5f;
+                        float h_px = bot_y - top_y;
+                        if (h_px < col_w) h_px = col_w;
+                        ui_draw_rect(canvas, px, top_y, col_w, h_px, wf_color);
                     }
                 }
             }
@@ -495,7 +479,7 @@ void ui_draw_timeline_panel(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_a
     current_y = y + 38.0f * s;
     for (int track = 0; track < MUZZA_MAX_TRACKS; ++track) {
         char track_label[24];
-        float track_h = ui_clampf(proj->track_heights[track] * s, 24.0f * s, h - 50.0f * s);
+        float track_h = ui_clampf(proj->tracks[track].height * s, 24.0f * s, h - 50.0f * s);
 
         ui_draw_rect(canvas, x + 1.0f * s, current_y, header_w - 1.0f * s, track_h, MUZZA_COLOR_BG_HEADER);
         snprintf(track_label, sizeof(track_label), "TRACK %d", track + 1);

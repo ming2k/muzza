@@ -31,38 +31,6 @@ static void pause_inactive_decoders(muzza_project* project, int active_source_me
     }
 }
 
-static int find_top_video_clip(const muzza_project* proj, double time_seconds) {
-    int found = -1;
-    int highest_track = -1;
-    if (!proj) return -1;
-    for (size_t i = 0; i < proj->num_clips; ++i) {
-        const muzza_clip* clip = &proj->clips[i];
-        if (clip->type != MUZZA_CLIP_VIDEO) continue;
-        double clip_end = clip->tl_start + clip->tl_duration;
-        if (time_seconds >= clip->tl_start && time_seconds < clip_end) {
-            if (clip->track_index >= highest_track) {
-                highest_track = clip->track_index;
-                found = (int)i;
-            }
-        }
-    }
-    return found;
-}
-
-static int find_active_audio_clips(const muzza_project* proj, double time_seconds, int* out_indices, int max_indices) {
-    int count = 0;
-    if (!proj) return 0;
-    for (size_t i = 0; i < proj->num_clips && count < max_indices; ++i) {
-        const muzza_clip* clip = &proj->clips[i];
-        if (clip->type != MUZZA_CLIP_AUDIO) continue;
-        double clip_end = clip->tl_start + clip->tl_duration;
-        if (time_seconds >= clip->tl_start && time_seconds < clip_end) {
-            out_indices[count++] = (int)i;
-        }
-    }
-    return count;
-}
-
 void playback_reset_session(muzza_ui_state* ui) {
     if (!ui) return;
     ui->playback.valid = false;
@@ -84,9 +52,9 @@ static void update_timeline_preview(fx_context* ctx, muzza_project* project, muz
     }
 
     double timeline_time = ui->timeline.playhead_time;
-    int v_clip_idx = find_top_video_clip(project, timeline_time);
+    int v_clip_idx = project_find_top_video_clip(project, timeline_time);
     int a_clips[16];
-    int num_a_clips = find_active_audio_clips(project, timeline_time, a_clips, 16);
+    int num_a_clips = project_find_active_audio_clips(project, timeline_time, a_clips, 16);
 
     pause_inactive_decoders(project, -1, v_clip_idx, a_clips, num_a_clips);
 
@@ -129,9 +97,14 @@ static void update_timeline_preview(fx_context* ctx, muzza_project* project, muz
         muzza_decoder* a_dec = project_ensure_clip_decoder(project, a_idx, ctx);
         if (a_dec) {
             double target_media_time = project_get_clip_media_time(project, a_clip, timeline_time);
-            
-            double drift = fabs(decoder_get_time(a_dec) - target_media_time);
-            if (ui->timeline.is_scrubbing || !ui->playback.valid || drift > 1.0) {
+
+            /* Drift = how far the audio currently being heard is from where the
+               playhead points. decoder_get_time() reports the lookahead PTS
+               (≈250ms past the playing position during steady-state); using
+               that here would force a re-seek every frame. */
+            double play_time = decoder_get_audio_play_time(a_dec);
+            double drift = fabs(play_time - target_media_time);
+            if (ui->timeline.is_scrubbing || !ui->playback.valid || drift > 0.15) {
                 decoder_seek_to_time(a_dec, target_media_time);
             }
 

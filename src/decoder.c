@@ -37,6 +37,11 @@ struct muzza_decoder {
     double duration;
     bool paused;
     bool is_eof;
+    /* During seek, audio packets must still be decoded (to flush codec buffers
+       and advance current_pts), but the converted samples must NOT be queued
+       to the SDL audio stream — otherwise stale audio from the keyframe
+       preceding the seek target ends up in the playback queue. */
+    bool drop_audio_output;
 };
 
 static void log_av_error(const char* context, int errnum) {
@@ -294,8 +299,10 @@ static void decoder_process_audio_packet(muzza_decoder* dec) {
             dec->audio_frame->nb_samples
         );
         if (converted > 0) {
-            SDL_PutAudioStreamData(dec->audio_stream, out_data, converted * 2 * (int)sizeof(float));
-            
+            if (!dec->drop_audio_output) {
+                SDL_PutAudioStreamData(dec->audio_stream, out_data, converted * 2 * (int)sizeof(float));
+            }
+
             // Update PTS from audio if it's the only thing we have or it's moving forward
             if (dec->audio_frame->pts != AV_NOPTS_VALUE) {
                 double pts = dec->audio_frame->pts * av_q2d(dec->fmt_ctx->streams[dec->audio_idx]->time_base);
@@ -403,6 +410,17 @@ muzza_decoder* decoder_create(fx_context* ctx, const char* filepath, muzza_decod
 
     if (dec->fmt_ctx->duration > 0) {
         dec->duration = dec->fmt_ctx->duration / (double)AV_TIME_BASE;
+    } else {
+        /* Fallback: derive duration from the longest stream */
+        for (unsigned int i = 0; i < dec->fmt_ctx->nb_streams; ++i) {
+            AVStream* stream = dec->fmt_ctx->streams[i];
+            if (stream->duration > 0) {
+                double stream_dur = (double)stream->duration * av_q2d(stream->time_base);
+                if (stream_dur > dec->duration) {
+                    dec->duration = stream_dur;
+                }
+            }
+        }
     }
 
     if (dec->video_idx >= 0) {
@@ -475,24 +493,17 @@ bool decoder_update_to_time(muzza_decoder* dec, double target_pts, bool process_
         SDL_ClearAudioStream(dec->audio_stream);
     }
 
-    // If we are already at or past the target, do nothing and wait
-    if (dec->current_pts >= target_pts - 0.001) {
-        return true; 
-    }
+    /* For audio clips, decode video=false (different decoder per clip type).
+       For video clips, only video. */
+    process_video = !process_audio && (dec->video_idx >= 0 && dec->video_ctx != NULL);
 
-    if (process_audio && !process_video) {
-        process_video = false;
-    } else if (process_audio) {
-        process_video = false;
-    } else {
-        process_video = true;
-    }
-
-    // Decode until we catch up to target_pts
+    /* Decode until both: (1) the decoded PTS has reached the target AND
+       (2) the SDL audio queue holds enough lookahead. The second condition
+       must be checked even when (1) is already true — otherwise after a
+       seek, the queue stays empty and SDL has nothing to play. */
     while (steps < 15 && !dec->is_eof) {
         int queued_audio = (dec->audio_stream && process_audio) ? SDL_GetAudioStreamQueued(dec->audio_stream) : min_audio_bytes;
 
-        // If we reached the target time and have enough audio buffered, we are done
         if (dec->current_pts >= target_pts && (queued_audio >= min_audio_bytes)) {
             break;
         }
@@ -547,6 +558,17 @@ double decoder_get_time(muzza_decoder* dec) {
     return dec ? dec->current_pts : 0.0;
 }
 
+double decoder_get_audio_play_time(muzza_decoder* dec) {
+    if (!dec) return 0.0;
+    if (!dec->audio_stream) return dec->current_pts;
+    int queued_bytes = SDL_GetAudioStreamQueued(dec->audio_stream);
+    if (queued_bytes <= 0) return dec->current_pts;
+    /* Output spec: 48000 Hz, 2 ch, F32 = 384000 bytes/sec */
+    double queued_seconds = (double)queued_bytes / 384000.0;
+    double t = dec->current_pts - queued_seconds;
+    return t > 0.0 ? t : 0.0;
+}
+
 void decoder_seek(muzza_decoder* dec, float progress) {
     if (!dec) {
         return;
@@ -591,19 +613,21 @@ bool decoder_seek_to_time(muzza_decoder* dec, double time_seconds) {
 
     was_paused = dec->paused;
     dec->paused = false;
-    
+    dec->drop_audio_output = true;
+
     // 3. Precise Seek: decode until we cross the target
     int safety = 0;
     while (safety < 150) {
         // Use physically available streams for scanning
         bool scan_v = (dec->video_idx >= 0 && dec->video_ctx != NULL);
         bool scan_a = (dec->audio_idx >= 0 && dec->audio_ctx != NULL);
-        
+
         if (!decoder_read_packets(dec, scan_v, scan_a)) break;
         if (dec->current_pts >= time_seconds - 0.001) break;
         safety++;
     }
 
+    dec->drop_audio_output = false;
     dec->paused = was_paused;
     return true;
 }
@@ -635,7 +659,7 @@ bool decoder_has_audio(muzza_decoder* dec) {
     return dec && dec->audio_idx >= 0 && dec->audio_ctx != NULL;
 }
 
-bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_peaks) {
+bool decoder_generate_waveform(const char* filepath, float* out_mins, float* out_maxs, int num_peaks, double duration) {
     AVFormatContext* fmt_ctx = NULL;
     AVCodecContext* audio_ctx = NULL;
     const AVCodec* codec = NULL;
@@ -644,13 +668,14 @@ bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_p
     struct SwrContext* swr_ctx = NULL;
     int audio_idx = -1;
     bool success = false;
-    double duration = 0.0;
+    int ret;
 
-    if (!filepath || !out_peaks || num_peaks <= 0) {
+    if (!filepath || !out_mins || !out_maxs || num_peaks <= 0 || duration <= 0.0) {
         return false;
     }
 
-    memset(out_peaks, 0, sizeof(float) * num_peaks);
+    memset(out_mins, 0, sizeof(float) * num_peaks);
+    memset(out_maxs, 0, sizeof(float) * num_peaks);
 
     if (avformat_open_input(&fmt_ctx, filepath, NULL, NULL) < 0) {
         return false;
@@ -694,9 +719,16 @@ bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_p
     pkt = av_packet_alloc();
     frame = av_frame_alloc();
     swr_ctx = swr_alloc();
+    if (!swr_ctx) {
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        avcodec_free_context(&audio_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
 
     AVChannelLayout out_layout = AV_CHANNEL_LAYOUT_MONO;
-    swr_alloc_set_opts2(
+    ret = swr_alloc_set_opts2(
         &swr_ctx,
         &out_layout,
         AV_SAMPLE_FMT_FLT,
@@ -706,19 +738,35 @@ bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_p
         audio_ctx->sample_rate,
         0, NULL
     );
-    swr_init(swr_ctx);
-
-    duration = (double)fmt_ctx->duration / AV_TIME_BASE;
-    if (duration <= 0.0) {
-        duration = 1.0;
+    if (ret < 0) {
+        log_av_error("waveform: swr_alloc_set_opts2 failed", ret);
+        swr_free(&swr_ctx);
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        avcodec_free_context(&audio_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
     }
-    
-    float max_peak = 0.0f;
+
+    ret = swr_init(swr_ctx);
+    if (ret < 0) {
+        log_av_error("waveform: swr_init failed", ret);
+        swr_free(&swr_ctx);
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        avcodec_free_context(&audio_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
+
+    float max_abs = 0.0f;
+    int64_t sample_count = 0;
     while (av_read_frame(fmt_ctx, pkt) >= 0) {
         if (pkt->stream_index == audio_idx) {
-            if (avcodec_send_packet(audio_ctx, pkt) == 0) {
+            ret = avcodec_send_packet(audio_ctx, pkt);
+            if (ret == 0 || ret == AVERROR(EAGAIN)) {
                 while (avcodec_receive_frame(audio_ctx, frame) == 0) {
-                    float* buffer = NULL;
+                    uint8_t* buffer_u8 = NULL;
                     int num_samples = (int)av_rescale_rnd(
                         swr_get_delay(swr_ctx, audio_ctx->sample_rate) + frame->nb_samples,
                         44100,
@@ -726,34 +774,59 @@ bool decoder_generate_waveform(const char* filepath, float* out_peaks, int num_p
                         AV_ROUND_UP
                     );
 
-                    av_samples_alloc((uint8_t**)&buffer, NULL, 1, num_samples, AV_SAMPLE_FMT_FLT, 0);
-                    int converted = swr_convert(swr_ctx, (uint8_t**)&buffer, num_samples, (const uint8_t**)frame->data, frame->nb_samples);
-                    
-                    if (converted > 0) {
-                        double timestamp = (double)frame->pts * av_q2d(fmt_ctx->streams[audio_idx]->time_base);
-                        int peak_idx = (int)((timestamp / duration) * num_peaks);
-                        
-                        if (peak_idx >= 0 && peak_idx < num_peaks) {
-                            for (int i = 0; i < converted; ++i) {
-                                float val = fabsf(buffer[i]);
-                                if (val > out_peaks[peak_idx]) {
-                                    out_peaks[peak_idx] = val;
-                                }
-                                if (val > max_peak) max_peak = val;
-                            }
-                        }
+                    if (num_samples <= 0) {
+                        continue;
                     }
-                    av_freep(&buffer);
+
+                    ret = av_samples_alloc(&buffer_u8, NULL, 1, num_samples, AV_SAMPLE_FMT_FLT, 0);
+                    if (ret < 0) {
+                        continue;
+                    }
+
+                    float* buffer = (float*)buffer_u8;
+                    int converted = swr_convert(swr_ctx, &buffer_u8, num_samples, (const uint8_t**)frame->data, frame->nb_samples);
+
+                    if (converted > 0) {
+                        /* Re-compute the bucket per sample so every peak slot gets data.
+                           Computing once per frame batch (~1024 samples) collapsed every
+                           sample into a single bucket and left ~90% of buckets at zero,
+                           which produced a degenerate polygon the tessellator dropped. */
+                        const double inv_duration_44100 = 1.0 / (44100.0 * duration);
+                        for (int i = 0; i < converted; ++i) {
+                            int peak_idx = (int)((double)(sample_count + i) * inv_duration_44100 * num_peaks);
+                            if (peak_idx < 0) peak_idx = 0;
+                            if (peak_idx >= num_peaks) peak_idx = num_peaks - 1;
+
+                            float val = buffer[i];
+                            if (val < out_mins[peak_idx]) out_mins[peak_idx] = val;
+                            if (val > out_maxs[peak_idx]) out_maxs[peak_idx] = val;
+                            float abs_val = fabsf(val);
+                            if (abs_val > max_abs) max_abs = abs_val;
+                        }
+                        sample_count += converted;
+                    }
+                    av_freep(&buffer_u8);
                 }
             }
         }
         av_packet_unref(pkt);
     }
 
-    // Normalization step to ensure waveform fits height perfectly without clipping
-    if (max_peak > 0.0001f) {
+    /* If no samples were processed, the file likely had no decodable audio */
+    if (sample_count == 0) {
+        swr_free(&swr_ctx);
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+        avcodec_free_context(&audio_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
+
+    /* Normalize symmetrically around zero so the waveform is centered */
+    if (max_abs > 0.0001f) {
         for (int i = 0; i < num_peaks; ++i) {
-            out_peaks[i] /= max_peak;
+            out_mins[i] /= max_abs;
+            out_maxs[i] /= max_abs;
         }
     }
 
