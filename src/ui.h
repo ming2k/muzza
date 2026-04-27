@@ -40,7 +40,8 @@ typedef struct {
 
 typedef enum {
     MUZZA_TOOL_SELECT = 0,
-    MUZZA_TOOL_RAZOR = 1
+    MUZZA_TOOL_RAZOR = 1,
+    MUZZA_TOOL_RIPPLE = 2
 } muzza_timeline_tool;
 
 typedef struct {
@@ -67,6 +68,12 @@ typedef struct {
     double trim_original_start;
     double trim_original_duration;
     double trim_original_media_in;
+
+    bool is_dragging_fade;
+    int fade_clip_index;
+    int fade_edge; /* -1 = fade_in, 1 = fade_out */
+    int fade_hover_clip;
+    int fade_hover_edge;
 } muzza_timeline_state;
 
 typedef struct {
@@ -83,6 +90,7 @@ typedef struct {
     int media_id;
     int audio_media_id;
     bool source_mode;
+    float fade_opacity;
 } muzza_playback_session_state;
 
 typedef struct {
@@ -113,6 +121,7 @@ typedef struct {
     bool is_dragging_splitter_v;
     bool is_dragging_splitter_h;
     bool is_playing;
+    float playback_speed;
 
     muzza_project* project;
     muzza_input_state input;
@@ -123,6 +132,29 @@ typedef struct {
     muzza_playback_session_state playback;
     muzza_export_panel_state export_panel;
     muzza_input_state dialog_input;  /* Independent input for export/import dialogs */
+
+    /* Tooltip */
+    char tooltip_text[256];
+    float tooltip_x;
+    float tooltip_y;
+    bool tooltip_visible;
+
+    /* Speed tap state */
+    uint64_t speed_tap_time;
+    int speed_tap_count;
+
+    /* Speed slider drag state */
+    bool is_dragging_speed_slider;
+    float speed_slider_drag_anchor;
+
+    /* Debug */
+    bool debug_overlay;
+    float fps_display;
+    bool debug_input_log_enabled;
+
+    /* Input event log for debug */
+    char input_log[8][64];
+    int input_log_head;
 } muzza_ui_state;
 
 typedef struct {
@@ -139,11 +171,13 @@ typedef struct {
     int delete_clip_index;
     int split_clip_index;
     double split_time;
+    int ripple_delete_clip_index;
 } muzza_ui_actions;
 
 void ui_state_init(muzza_ui_state* state, muzza_project* project);
 void ui_begin_frame(muzza_ui_state* state);
 void ui_handle_event(muzza_ui_state* state, muzza_input_state* target_input, const SDL_Event* event, SDL_Window* window);
 void ui_render(fx_canvas* canvas, muzza_ui_state* state, muzza_ui_actions* actions);
+void ui_set_tooltip(muzza_ui_state* state, const char* text);
 
 #endif

@@ -800,6 +800,26 @@ static bool encode_video_frame(muzza_exporter* exp, double timeline_time) {
                         (const uint8_t* const*)src_frame->data, src_frame->linesize,
                         0, src_frame->height,
                         exp->vframe->data, exp->vframe->linesize);
+
+                    /* Apply fade-to-black */
+                    double fade = project_get_clip_fade_opacity(clip, timeline_time);
+                    if (fade < 1.0) {
+                        for (int y = 0; y < exp->out_h; ++y) {
+                            uint8_t* row = exp->vframe->data[0] + y * exp->vframe->linesize[0];
+                            for (int x = 0; x < exp->out_w; ++x) {
+                                row[x] = (uint8_t)(row[x] * fade);
+                            }
+                        }
+                        /* Desaturate U/V channels proportionally */
+                        for (int y = 0; y < exp->out_h / 2; ++y) {
+                            uint8_t* u_row = exp->vframe->data[1] + y * exp->vframe->linesize[1];
+                            uint8_t* v_row = exp->vframe->data[2] + y * exp->vframe->linesize[2];
+                            for (int x = 0; x < exp->out_w / 2; ++x) {
+                                u_row[x] = (uint8_t)((u_row[x] - 128) * fade + 128);
+                                v_row[x] = (uint8_t)((v_row[x] - 128) * fade + 128);
+                            }
+                        }
+                    }
                 } else {
                     got_frame = false;
                 }

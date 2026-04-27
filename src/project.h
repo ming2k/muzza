@@ -73,6 +73,9 @@ typedef struct {
     muzza_filter_type filter;
     bool selected;
 
+    double fade_in_duration;
+    double fade_out_duration;
+
     uint64_t link_group_id;
     muzza_link_role link_role;
 
@@ -123,6 +126,10 @@ int project_find_top_video_clip(const muzza_project* proj, double time_seconds);
 int project_find_active_audio_clips(const muzza_project* proj, double time_seconds, int* out_indices, int max_indices);
 double project_get_clip_media_time(const muzza_project* proj, const muzza_clip* clip, double timeline_time);
 void project_recalculate_duration(muzza_project* proj);
+
+/* Fade opacity: 0.0 = fully transparent (fade-to-black), 1.0 = fully opaque.
+   Evaluated at timeline_time for the given clip. */
+double project_get_clip_fade_opacity(const muzza_clip* clip, double timeline_time);
 
 bool project_trim_clip_left(muzza_project* proj, int clip_index, double new_start, double* out_new_media_in, double* out_new_duration);
 bool project_trim_clip_right(muzza_project* proj, int clip_index, double new_duration);

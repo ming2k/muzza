@@ -1,6 +1,27 @@
 # Changelog
 
-## v0.1.7 - 2026-04-25
+## v0.1.8 - 2026-04-27
+
+Clip fade in/out, ripple-delete tool, variable-speed playback (J/K/L), debug overlay, and UI polish.
+
+### Added
+
+- **Clip Fade In/Out**: Clips now carry `fade_in_duration` and `fade_out_duration` fields. Drag fade handles on clip edges to create fade-to-black transitions. Fade opacity is evaluated per-sample during export.
+- **Ripple Delete Tool**: New `MUZZA_TOOL_RIPPLE` mode (toolbar button with X icon) and `Ripple` key. Ripple-deleting a clip removes it and shifts all subsequent clips on every track backward by the deleted clip's duration.
+- **Variable-Speed Playback**: Multi-tap `L` cycles forward speed (1x → 2x → 4x → 8x → 1x) and `J` cycles reverse speed (-1x → -2x → -4x → -8x → -1x). `K` stops playback. A speed label and draggable slider in the header bar give visual feedback.
+- **Tooltips**: `ui_set_tooltip` renders hover tooltips for clips, trim handles, fade handles, toolbar buttons, and time ruler ticks.
+- **Debug Overlay**: Toggle with `Ctrl+D` to show FPS counter, input event log, and cursor-hit region name (like a browser element inspector).
+- **New Toolbar Icons**: `draw_icon_select` (chevron), `draw_icon_razor` (blade), `draw_icon_ripple` (X) for visual tool switching.
+
+### Changed
+
+- **Toolbar layout**: Three tool buttons (Select, Razor, Ripple) replace the previous two-button SEL/CUT bar; icons are rendered via `ui_icons.h`.
+- **Arrow-key nudging**: Left/Right arrows in the main window nudge the playhead by frame increments (1/fps).
+- **Header bar FPS display and speed slider** integrated into the top chrome.
+
+### Fixed
+
+- Various render and interaction edge cases around trim/fade handle hit-testing at extreme zoom levels.
 
 Audio-sync correctness pass, multi-format export, per-track metadata, and a Diátaxis docs reorganization.
 

@@ -241,4 +241,57 @@ static inline void draw_icon_file(fx_canvas* c, float x, float y, float size, fx
     fx_fill_rect(c, &corner, corner_color);
 }
 
+/* ========================================================================== */
+/* Tools: Razor — single diagonal blade line                                  */
+/* ========================================================================== */
+static inline void draw_icon_select(fx_canvas* c, float x, float y, float size, fx_color color) {
+    float pad = size * 0.10f;
+    fx_path* p = fx_path_create();
+    // Arrow body: left-pointing chevron
+    fx_path_move_to(p, x + size - pad, y + pad);
+    fx_path_line_to(p, x + pad, y + size * 0.5f);
+    fx_path_line_to(p, x + size - pad, y + size - pad);
+    fx_path_close(p);
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    fx_fill_path(c, p, &paint);
+    icon_path_push(p);
+}
+
+/* ========================================================================== */
+/* Tools: Razor — single diagonal blade line                                  */
+/* ========================================================================== */
+static inline void draw_icon_razor(fx_canvas* c, float x, float y, float size, fx_color color) {
+    float pad = size * 0.25f;
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    paint.stroke_width = size * 0.18f;
+    paint.line_cap = FX_CAP_ROUND;
+
+    fx_path* p = fx_path_create();
+    fx_path_move_to(p, x + pad, y + size - pad);
+    fx_path_line_to(p, x + size - pad, y + pad);
+    fx_stroke_path(c, p, &paint);
+    icon_path_push(p);
+}
+
+/* ========================================================================== */
+/* Tools: Ripple — diagonal cross (delete/take marker)                        */
+/* ========================================================================== */
+static inline void draw_icon_ripple(fx_canvas* c, float x, float y, float size, fx_color color) {
+    float pad = size * 0.22f;
+    fx_paint paint;
+    fx_paint_init(&paint, color);
+    paint.stroke_width = size * 0.16f;
+    paint.line_cap = FX_CAP_ROUND;
+
+    fx_path* p = fx_path_create();
+    fx_path_move_to(p, x + pad, y + pad);
+    fx_path_line_to(p, x + size - pad, y + size - pad);
+    fx_path_move_to(p, x + size - pad, y + pad);
+    fx_path_line_to(p, x + pad, y + size - pad);
+    fx_stroke_path(c, p, &paint);
+    icon_path_push(p);
+}
+
 #endif

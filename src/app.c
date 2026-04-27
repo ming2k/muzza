@@ -460,11 +460,21 @@ int muzza_app_main(int argc, char** argv) {
     app.exporter = NULL;
     app.export_thread = NULL;
 
+    Uint64 fps_last_ticks = last_ticks;
+    int fps_frame_count = 0;
+
     while (running) {
         SDL_Event event;
         Uint64 now_ticks = SDL_GetTicks();
         double delta_time = (now_ticks - last_ticks) / 1000.0;
         muzza_ui_actions actions = {0};
+
+        fps_frame_count++;
+        if (now_ticks - fps_last_ticks >= 500) {
+            app.ui.fps_display = (float)fps_frame_count / ((float)(now_ticks - fps_last_ticks) / 1000.0f);
+            fps_frame_count = 0;
+            fps_last_ticks = now_ticks;
+        }
 
         last_ticks = now_ticks;
         ui_begin_frame(&app.ui);
@@ -510,10 +520,48 @@ int muzza_app_main(int argc, char** argv) {
                     }
                 } else if (event.key.key == SDLK_SPACE && event.window.windowID == main_id) {
                     app.ui.is_playing = !app.ui.is_playing;
+                } else if (event.key.key == SDLK_L && event.window.windowID == main_id) {
+                    // Multi-tap L: speed 1x -> 2x -> 4x -> 8x -> back to 1x
+                    Uint64 now = SDL_GetTicks();
+                    if (app.ui.speed_tap_count == 0 || (now - app.ui.speed_tap_time) > 400) {
+                        app.ui.speed_tap_count = 1;
+                    } else {
+                        app.ui.speed_tap_count++;
+                    }
+                    app.ui.speed_tap_time = now;
+                    if (app.ui.speed_tap_count > 4) app.ui.speed_tap_count = 1;
+                    app.ui.playback_speed = (float)(1 << (app.ui.speed_tap_count - 1));
+                    app.ui.is_playing = true;
+                } else if (event.key.key == SDLK_J && event.window.windowID == main_id) {
+                    // Multi-tap J: reverse -1x -> -2x -> -4x -> -8x -> back to -1x
+                    Uint64 now = SDL_GetTicks();
+                    if (app.ui.speed_tap_count == 0 || (now - app.ui.speed_tap_time) > 400) {
+                        app.ui.speed_tap_count = 1;
+                    } else {
+                        app.ui.speed_tap_count++;
+                    }
+                    app.ui.speed_tap_time = now;
+                    if (app.ui.speed_tap_count > 4) app.ui.speed_tap_count = 1;
+                    app.ui.playback_speed = -(float)(1 << (app.ui.speed_tap_count - 1));
+                    app.ui.is_playing = true;
+                } else if (event.key.key == SDLK_K && event.window.windowID == main_id) {
+                    app.ui.playback_speed = 0.0f;
+                    app.ui.speed_tap_count = 0;
+                    app.ui.is_playing = false;
+                } else if ((event.key.key == SDLK_LEFT || event.key.key == SDLK_RIGHT) && event.window.windowID == main_id) {
+                    // Frame step: stop playback first, then step
+                    app.ui.is_playing = false;
+                    float step = 1.0f / 30.0f; // ~1 frame at 30fps
+                    if (event.key.key == SDLK_LEFT) step = -step;
+                    double new_time = app.ui.timeline.playhead_time + (double)step;
+                    if (new_time < 0.0) new_time = 0.0;
+                    app.ui.timeline.playhead_time = new_time;
                 } else if (event.key.key == SDLK_DELETE && event.window.windowID == main_id) {
                     if (app.ui.timeline.selected_clip_index >= 0) {
                         actions.delete_clip_index = app.ui.timeline.selected_clip_index;
                     }
+                } else if (event.key.key == SDLK_D && (event.key.mod & SDL_KMOD_CTRL) && event.window.windowID == main_id) {
+                    app.ui.debug_overlay = !app.ui.debug_overlay;
                 }
             }
 
@@ -653,6 +701,13 @@ int muzza_app_main(int argc, char** argv) {
         }
         if (actions.delete_clip_index >= 0) {
             project_remove_clip(app.project, actions.delete_clip_index);
+            app.ui.timeline.selected_clip_index = -1;
+            app.ui.timeline.active_clip_index = -1;
+            playback_reset_session(&app.ui);
+            sanitize_ui_after_project_change(&app);
+        }
+        if (actions.ripple_delete_clip_index >= 0) {
+            project_ripple_delete_clip(app.project, actions.ripple_delete_clip_index);
             app.ui.timeline.selected_clip_index = -1;
             app.ui.timeline.active_clip_index = -1;
             playback_reset_session(&app.ui);

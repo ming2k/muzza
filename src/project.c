@@ -57,6 +57,8 @@ typedef struct {
     float pos_x;
     float pos_y;
     muzza_filter_type filter;
+    double fade_in_duration;
+    double fade_out_duration;
     bool selected;
     uint64_t link_group_id;
     muzza_link_role link_role;
@@ -166,6 +168,8 @@ static void init_clip_defaults(clip_parse_state* clip) {
     clip->opacity = 1.0f;
     clip->scale = 1.0f;
     clip->filter = MUZZA_FILTER_NONE;
+    clip->fade_in_duration = 0.0;
+    clip->fade_out_duration = 0.0;
 }
 
 static bool finalize_media_section(muzza_project* proj, media_parse_state* media) {
@@ -243,6 +247,8 @@ static bool finalize_clip_section(muzza_project* proj, clip_parse_state* clip) {
     proj->clips[clip_index].pos_x = clip->pos_x;
     proj->clips[clip_index].pos_y = clip->pos_y;
     proj->clips[clip_index].filter = clip->filter;
+    proj->clips[clip_index].fade_in_duration = clip->fade_in_duration;
+    proj->clips[clip_index].fade_out_duration = clip->fade_out_duration;
     proj->clips[clip_index].selected = clip->selected;
     proj->clips[clip_index].link_group_id = clip->link_group_id;
     proj->clips[clip_index].link_role = clip->link_role;
@@ -340,6 +346,15 @@ void project_remove_media(muzza_project* proj, int id) {
         decoder_destroy(proj->media_pool[media_index].dec);
         proj->media_pool[media_index].dec = NULL;
     }
+    if (proj->media_pool[media_index].waveform.mins) {
+        free(proj->media_pool[media_index].waveform.mins);
+        proj->media_pool[media_index].waveform.mins = NULL;
+    }
+    if (proj->media_pool[media_index].waveform.maxs) {
+        free(proj->media_pool[media_index].waveform.maxs);
+        proj->media_pool[media_index].waveform.maxs = NULL;
+    }
+    proj->media_pool[media_index].waveform.num_peaks = 0;
 
     for (size_t clip_index = 0; clip_index < proj->num_clips;) {
         if (proj->clips[clip_index].media_id == id) {
@@ -525,6 +540,8 @@ int project_add_clip(muzza_project* proj, int media_id, int track, muzza_clip_ty
     clip->opacity = 1.0f;
     clip->scale = 1.0f;
     clip->filter = MUZZA_FILTER_NONE;
+    clip->fade_in_duration = 0.0;
+    clip->fade_out_duration = 0.0;
     clip->link_group_id = 0;
     clip->link_role = MUZZA_LINK_NONE;
 
@@ -596,11 +613,14 @@ int project_split_clip(muzza_project* proj, int clip_index, double split_time) {
     new_clip->pos_x = orig->pos_x;
     new_clip->pos_y = orig->pos_y;
     new_clip->filter = orig->filter;
+    new_clip->fade_in_duration = 0.0;
+    new_clip->fade_out_duration = orig->fade_out_duration;
     new_clip->selected = false;
     new_clip->dec = NULL;
 
     // Shorten original (left side)
     orig->tl_duration = split_time - orig->tl_start;
+    orig->fade_out_duration = 0.0;
     orig->selected = true;
 
     proj->num_clips++;
@@ -723,6 +743,26 @@ void project_recalculate_duration(muzza_project* proj) {
     proj->duration = duration;
 }
 
+double project_get_clip_fade_opacity(const muzza_clip* clip, double timeline_time) {
+    if (!clip) return 1.0;
+    double t = timeline_time - clip->tl_start;
+    if (t < 0.0) return 0.0;
+    if (t > clip->tl_duration) return 0.0;
+
+    if (clip->fade_in_duration > 0.0 && t < clip->fade_in_duration) {
+        return t / clip->fade_in_duration;
+    }
+    if (clip->fade_out_duration > 0.0) {
+        double fade_start = clip->tl_duration - clip->fade_out_duration;
+        if (t > fade_start) {
+            double rem = clip->tl_duration - t;
+            if (rem < 0.0) rem = 0.0;
+            return rem / clip->fade_out_duration;
+        }
+    }
+    return 1.0;
+}
+
 bool project_trim_clip_left(muzza_project* proj, int clip_index, double new_start, double* out_new_media_in, double* out_new_duration) {
     if (!proj || clip_index < 0 || (size_t)clip_index >= proj->num_clips || !out_new_media_in || !out_new_duration) {
         return false;
@@ -827,7 +867,6 @@ void project_ripple_delete_clip(muzza_project* proj, int clip_index) {
 
     project_remove_clip(proj, clip_index);
 
-    double gap_end = gap_start + gap_dur;
     for (size_t i = 0; i < proj->num_clips; ++i) {
         muzza_clip* clip = &proj->clips[i];
         if (clip->track_index == track && clip->tl_start >= gap_start) {
@@ -861,8 +900,30 @@ muzza_move_result project_move_clip(muzza_project* proj, int clip_index, double 
         return MUZZA_MOVE_REJECTED;
     }
 
+    int old_track = clip->track_index;
+    int track_delta = new_track - old_track;
     clip->tl_start = new_start;
     clip->track_index = new_track;
+
+    /* Move linked AV clip together */
+    if (clip->link_group_id > 0) {
+        for (size_t i = 0; i < proj->num_clips; ++i) {
+            if ((int)i == clip_index) continue;
+            muzza_clip* linked = &proj->clips[i];
+            if (linked->link_group_id == clip->link_group_id) {
+                int linked_new_track = linked->track_index + track_delta;
+                if (linked_new_track < 0) linked_new_track = 0;
+                if (linked_new_track >= MUZZA_MAX_TRACKS) linked_new_track = MUZZA_MAX_TRACKS - 1;
+                /* Only move if no overlap on target track */
+                if (!project_clips_would_overlap(proj, (int)i, linked_new_track, new_start, linked->tl_duration)) {
+                    linked->tl_start = new_start;
+                    linked->track_index = linked_new_track;
+                }
+                break;
+            }
+        }
+    }
+
     project_recalculate_duration(proj);
     return MUZZA_MOVE_OK;
 }
@@ -918,9 +979,11 @@ bool project_save(muzza_project* proj, const char* filepath) {
         fprintf(file, "scale=%.3f\n", clip->scale);
         fprintf(file, "pos_x=%.3f\n", clip->pos_x);
         fprintf(file, "pos_y=%.3f\n", clip->pos_y);
-        fprintf(file, "filter=%d\n", (int)clip->filter);
-        fprintf(file, "selected=%d\n", clip->selected ? 1 : 0);
-        fprintf(file, "link_group=%llu\n", (unsigned long long)clip->link_group_id);
+    fprintf(file, "filter=%d\n", (int)clip->filter);
+    fprintf(file, "fade_in=%.3f\n", clip->fade_in_duration);
+    fprintf(file, "fade_out=%.3f\n", clip->fade_out_duration);
+    fprintf(file, "selected=%d\n", clip->selected ? 1 : 0);
+    fprintf(file, "link_group=%llu\n", (unsigned long long)clip->link_group_id);
         fprintf(file, "link_role=%d\n", (int)clip->link_role);
     }
 
@@ -1046,6 +1109,10 @@ muzza_project* project_load(const char* filepath) {
                 clip.pos_y = (float)strtod(value, NULL);
             } else if (strcmp(key, "filter") == 0) {
                 clip.filter = (muzza_filter_type)atoi(value);
+            } else if (strcmp(key, "fade_in") == 0) {
+                clip.fade_in_duration = strtod(value, NULL);
+            } else if (strcmp(key, "fade_out") == 0) {
+                clip.fade_out_duration = strtod(value, NULL);
             } else if (strcmp(key, "selected") == 0) {
                 clip.selected = atoi(value) != 0;
             } else if (strcmp(key, "link_group") == 0) {

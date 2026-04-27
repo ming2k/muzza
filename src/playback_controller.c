@@ -42,9 +42,19 @@ void playback_reset_session(muzza_ui_state* ui) {
 }
 
 static void update_timeline_preview(fx_context* ctx, muzza_project* project, muzza_ui_state* ui, double delta_time) {
+    // Determine solo/mute mask for the project
+    bool any_solo = false;
+    for (int t = 0; t < MUZZA_MAX_TRACKS; ++t) {
+        if (project->tracks[t].solo) { any_solo = true; break; }
+    }
+
     // 1. Advance Playhead by delta_time (The Master Clock)
     if (ui->is_playing && !ui->timeline.is_scrubbing) {
-        ui->timeline.playhead_time += delta_time;
+        ui->timeline.playhead_time += delta_time * (double)ui->playback_speed;
+        if (ui->timeline.playhead_time < 0.0) {
+            ui->timeline.playhead_time = 0.0;
+            ui->is_playing = false;
+        }
         if (project->duration > 0.0 && ui->timeline.playhead_time >= project->duration) {
             ui->timeline.playhead_time = project->duration;
             ui->is_playing = false;
@@ -55,6 +65,31 @@ static void update_timeline_preview(fx_context* ctx, muzza_project* project, muz
     int v_clip_idx = project_find_top_video_clip(project, timeline_time);
     int a_clips[16];
     int num_a_clips = project_find_active_audio_clips(project, timeline_time, a_clips, 16);
+
+    // Filter by mute/solo
+    if (v_clip_idx >= 0) {
+        muzza_clip* v_clip = &project->clips[v_clip_idx];
+        int track_idx = v_clip->track_index;
+        bool solo_mask = !any_solo || (track_idx >= 0 && track_idx < MUZZA_MAX_TRACKS && project->tracks[track_idx].solo);
+        bool muted = (track_idx >= 0 && track_idx < MUZZA_MAX_TRACKS && project->tracks[track_idx].muted);
+        if (muted || !solo_mask) {
+            v_clip_idx = -1;
+        }
+    }
+    {
+        int filtered = 0;
+        for (int i = 0; i < num_a_clips; ++i) {
+            int a_idx = a_clips[i];
+            int track_idx = project->clips[a_idx].track_index;
+            bool solo_mask = !any_solo || (track_idx >= 0 && track_idx < MUZZA_MAX_TRACKS && project->tracks[track_idx].solo);
+            bool muted = (track_idx >= 0 && track_idx < MUZZA_MAX_TRACKS && project->tracks[track_idx].muted);
+            if (!muted && solo_mask) {
+                if (filtered != i) a_clips[filtered] = a_clips[i];
+                filtered++;
+            }
+        }
+        num_a_clips = filtered;
+    }
 
     pause_inactive_decoders(project, -1, v_clip_idx, a_clips, num_a_clips);
 
@@ -85,6 +120,9 @@ static void update_timeline_preview(fx_context* ctx, muzza_project* project, muz
             }
 
             ui->preview.current_frame = decoder_get_image(v_dec, &ui->preview.frame_width, &ui->preview.frame_height);
+
+            /* Compute fade opacity for the active video clip */
+            ui->playback.fade_opacity = (float)project_get_clip_fade_opacity(v_clip, timeline_time);
         }
     } else {
         ui->preview.current_frame = NULL;

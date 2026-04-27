@@ -1,5 +1,5 @@
 project('muzza', 'c',
-  version : '0.1.7',
+  version : '0.1.8',
   license : 'Apache-2.0',
   default_options : [
     'c_std=c11',
